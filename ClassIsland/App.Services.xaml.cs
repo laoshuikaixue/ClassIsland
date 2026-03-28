@@ -98,6 +98,7 @@ public partial class App
         services.AddSingleton<IAudioService, AudioService>();
         services.AddSingleton<ITutorialService, TutorialService>();
         services.AddSingleton<IRefreshingService, RefreshingService>();
+        services.AddSingleton<HardwareSyncService>();
         // ViewModels
         services.AddTransient<ProfileSettingsViewModel>();
         services.AddTransient<DevPortalViewModel>();

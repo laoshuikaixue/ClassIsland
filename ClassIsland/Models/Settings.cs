@@ -221,6 +221,10 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
     private bool _isNonExactCountdownEnabled = false;
     private bool _showDetailedStatusOnSplash = false;
 
+    private bool _isHardwareSyncEnabled = true;
+    private string _hardwareSyncApiUrl = "http://47.116.166.10:5000/api/upload";
+    private string _hardwareSyncApiKey = "CIHW_2026_7f9bA2dE4kLm8QpR";
+
 
     public void NotifyPropertyChanged(string propertyName)
     {
@@ -2627,6 +2631,39 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
         {
             if (value == _classPlanEditModeIndex) return;
             _classPlanEditModeIndex = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsHardwareSyncEnabled
+    {
+        get => _isHardwareSyncEnabled;
+        set
+        {
+            if (value == _isHardwareSyncEnabled) return;
+            _isHardwareSyncEnabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string HardwareSyncApiUrl
+    {
+        get => _hardwareSyncApiUrl;
+        set
+        {
+            if (value == _hardwareSyncApiUrl) return;
+            _hardwareSyncApiUrl = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string HardwareSyncApiKey
+    {
+        get => _hardwareSyncApiKey;
+        set
+        {
+            if (value == _hardwareSyncApiKey) return;
+            _hardwareSyncApiKey = value;
             OnPropertyChanged();
         }
     }

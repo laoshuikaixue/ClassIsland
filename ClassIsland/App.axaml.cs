@@ -693,6 +693,7 @@ public partial class App : AppBase, IAppHost
         await GetService<IProfileService>().LoadProfileAsync();
         GetService<IWeatherService>();
         GetService<IExactTimeService>();
+        GetService<HardwareSyncService>();
         await GetService<IComponentsService>().LoadManagementConfig();
         // _ = GetService<WallpaperPickingService>().GetWallpaperAsync();
         _ = IAppHost.Host.StartAsync();
