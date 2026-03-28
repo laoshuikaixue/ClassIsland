@@ -371,3 +371,11 @@ cipx/
 
 **/.idea/avalonia.xml
 **/.idea/copilot.*
+
+.idea
+.sandbox
+VoiceHubComponent
+VoiceHubComponent-v1
+Package
+CIImage-ci2.0-early
+HardwareSupport/esp32/esp32-tft-ui-simulator

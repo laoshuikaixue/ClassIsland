@@ -105,6 +105,25 @@ public class HardwareSyncService
                 rainMsg = $"预计 {ClassIsland.Converters.MinutesToApproxTimeConverter.Instance.Convert(-rainMin, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture)} 后雨停";
             }
 
+            var tomorrowCourses = new List<object>();
+            var tomorrowPlan = LessonsService.GetClassPlanByDate(DateTime.Today.AddDays(1), out _);
+            if (tomorrowPlan != null)
+            {
+                foreach (var classInfo in tomorrowPlan.Classes)
+                {
+                    if (!ProfileService.Profile.Subjects.TryGetValue(classInfo.SubjectId, out var subject))
+                        continue;
+
+                    var timeItem = classInfo.CurrentTimeLayoutItem;
+                    tomorrowCourses.Add(new
+                    {
+                        name = subject.Name,
+                        startTime = timeItem.StartTime.ToString(@"hh\:mm"),
+                        endTime = timeItem.EndTime.ToString(@"hh\:mm")
+                    });
+                }
+            }
+
             var data = new
             {
                 date = DateTime.Today.ToString("yyyy-MM-dd"),
@@ -114,7 +133,8 @@ public class HardwareSyncService
                     temp = weatherInfo?.Current?.Temperature?.Value ?? "0",
                     rain = rainMsg
                 },
-                courses = courses
+                courses = courses,
+                tomorrowCourses = tomorrowCourses
             };
 
             using var request = new HttpRequestMessage(HttpMethod.Post, SettingsService.Settings.HardwareSyncApiUrl)
