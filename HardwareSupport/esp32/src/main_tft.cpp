@@ -88,6 +88,7 @@ unsigned long lastCurrentCourseMarqueeTime = 0;
 
 unsigned long lastCourseFetchTime = 0;
 unsigned long lastDisplayTime = 0;
+unsigned long lastScheduleScrollTime = 0;
 
 int timeStringToMinutes(String t) {
   int colonIndex = t.indexOf(':');
@@ -106,19 +107,27 @@ void updateCurrentCourse(int currentMin);
 String buildFooterText();
 String fitTextToWidth(const String& text, int maxWidth);
 
-void drawBootText(const String& line1, const String& line2, const String& line3, const String& line4) {
+void drawBootText(const String& line1, const String& line2, const String& line3, const String& line4, const String& line5 = "", const String& line6 = "") {
   if (canvas == nullptr) return;
   canvas->fillScreen(COLOR_BG);
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
-  u8g2Fonts.setCursor(8, 18);
+  u8g2Fonts.setCursor(2, 14);
   u8g2Fonts.print(line1);
-  u8g2Fonts.setCursor(8, 38);
+  u8g2Fonts.setCursor(2, 30);
   u8g2Fonts.print(line2);
-  u8g2Fonts.setCursor(8, 58);
+  u8g2Fonts.setCursor(2, 46);
   u8g2Fonts.print(line3);
-  u8g2Fonts.setCursor(8, 78);
+  u8g2Fonts.setCursor(2, 62);
   u8g2Fonts.print(line4);
+  if (line5.length() > 0) {
+    u8g2Fonts.setCursor(2, 78);
+    u8g2Fonts.print(line5);
+  }
+  if (line6.length() > 0) {
+    u8g2Fonts.setCursor(2, 94);
+    u8g2Fonts.print(line6);
+  }
   tft.drawRGBBitmap(0, 0, canvas->getBuffer(), canvas->width(), canvas->height());
 }
 
@@ -170,7 +179,7 @@ void setup() {
     for (int i = 0; i < (dotCount % 4); i++) {
       dots += ".";
     }
-    drawBootText("SYSTEM BOOTING  [OK]", "WLAN MAC INIT [OK]", "WIFI: " + String(ssid), "DHCP REQ" + dots);
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN MAC INIT   [OK]", "WIFI: " + String(ssid), "DHCP REQ" + dots);
     delay(300);
     dotCount++;
     Serial.print(".");
@@ -181,7 +190,7 @@ void setup() {
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
 
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
+  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
 
   configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
 
@@ -192,12 +201,12 @@ void setup() {
     for (int i = 0; i < (retry % 4); i++) {
       dots += ".";
     }
-    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
     delay(500);
     retry++;
   }
 
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC       [OK]" : "NTP SYNC     [FAIL]");
+  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC        [OK]" : "NTP SYNC      [FAIL]", "STARTING DAEMON...");
   delay(800);
 
   fetchVoiceHubData();
@@ -423,15 +432,11 @@ void updateCurrentCourse(int currentSecTotal) {
 }
 
 String buildFooterText() {
-  String bottomStr = fullScheduleStr;
+  if (currentScenario == SCENARIO_LOADING) return "数据加载中...    ";
   if (voiceHubFetched && voiceHubStr.length() > 0 && voiceHubStr.indexOf("暂无") == -1) {
-    bottomStr += "    " + voiceHubStr;
+    return voiceHubStr + "    ";
   }
-  if (bottomStr.length() == 0) {
-    bottomStr = (currentScenario == SCENARIO_LOADING) ? "数据加载中..." : "暂无数据";
-  }
-  bottomStr += "    ";
-  return bottomStr;
+  return "暂无排期数据    ";
 }
 
 String fitTextToWidth(const String& text, int maxWidth) {
@@ -504,6 +509,37 @@ void drawRadioIcon(int x, int y, uint16_t color) {
   canvas->drawPixel(x + 9, y + 8, color);
 }
 
+void drawSnowIcon(int x, int y, uint16_t color) {
+  canvas->drawLine(x + 6, y + 2, x + 6, y + 10, color);
+  canvas->drawLine(x + 2, y + 6, x + 10, y + 6, color);
+  canvas->drawLine(x + 3, y + 3, x + 9, y + 9, color);
+  canvas->drawLine(x + 3, y + 9, x + 9, y + 3, color);
+}
+
+void drawWindIcon(int x, int y, uint16_t color) {
+  canvas->drawLine(x + 2, y + 4, x + 8, y + 4, color);
+  canvas->drawLine(x + 8, y + 4, x + 9, y + 5, color);
+  canvas->drawLine(x + 4, y + 7, x + 10, y + 7, color);
+  canvas->drawLine(x + 10, y + 7, x + 9, y + 8, color);
+  canvas->drawLine(x + 3, y + 10, x + 7, y + 10, color);
+}
+
+void drawFogIcon(int x, int y, uint16_t color) {
+  canvas->drawLine(x + 3, y + 4, x + 9, y + 4, color);
+  canvas->drawLine(x + 2, y + 7, x + 10, y + 7, color);
+  canvas->drawLine(x + 4, y + 10, x + 8, y + 10, color);
+}
+
+String animPrevStatusText = "";
+String animPrevMainText = "";
+uint16_t animPrevStatusColor = COLOR_WHITE;
+bool isStateAnimating = false;
+unsigned long stateAnimStartTime = 0;
+String lastStatusText = "";
+String lastMainText = "";
+uint16_t lastStatusColor = COLOR_WHITE;
+float currentScheduleScrollY = 0.0f;
+
 void updateDisplay() {
   if (canvas == nullptr) return;
 
@@ -523,7 +559,103 @@ void updateDisplay() {
 
   canvas->fillScreen(COLOR_BG);
 
+  // Section 3: Bottom Section (Schedule) (74 - 107)
+  // Auto-scrolling logic for the entire schedule
+  u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+  
+  unsigned long nowScroll = millis();
+  unsigned long dtScroll = nowScroll - lastScheduleScrollTime;
+  if (lastScheduleScrollTime == 0) dtScroll = 0;
+  lastScheduleScrollTime = nowScroll;
+
+  // 12 pixels per second scroll speed
+  float scrollStep = (dtScroll / 1000.0f) * 12.0f;
+
+  if (currentScenario == SCENARIO_END_OF_DAY) {
+    if (tomorrowCourseCount > 0) {
+      // Calculate total height of tomorrow's schedule
+      float totalScheduleHeight = tomorrowCourseCount * 18.0f;
+      
+      if (tomorrowCourseCount > 2) {
+        currentScheduleScrollY += scrollStep;
+        if (currentScheduleScrollY >= totalScheduleHeight) {
+          currentScheduleScrollY -= totalScheduleHeight;
+        }
+      } else {
+        currentScheduleScrollY = 0.0f;
+      }
+
+      for (int i = 0; i < tomorrowCourseCount * 2; i++) {
+        int idx = i % tomorrowCourseCount;
+        int y = 74 + 4 + i * 18 - (int)currentScheduleScrollY;
+        
+        // Wrap around vertically if needed
+        if (y < 74 - 18) continue;
+        if (y > 128 + 18) continue;
+
+        if (y > 40 && y < 128) {
+          u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
+          u8g2Fonts.setCursor(6, y + 12);
+          u8g2Fonts.print("明日 " + tomorrowCourses[idx].startTime);
+          u8g2Fonts.setCursor(4 + 66, y + 12);
+          u8g2Fonts.print(fitTextToWidth(tomorrowCourses[idx].name, 128 - 8 - 66));
+        }
+      }
+    } else {
+      u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
+      u8g2Fonts.setCursor(6, 74 + 16);
+      u8g2Fonts.print("明日无课安排");
+    }
+  } else if (currentScenario == SCENARIO_NO_CLASSES) {
+    u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
+    u8g2Fonts.setCursor(6, 74 + 16);
+    u8g2Fonts.print("今日无课安排");
+  } else {
+    // Regular course list scrolling
+    float totalScheduleHeight = courseCount * 18.0f;
+    
+    if (courseCount > 2) {
+      currentScheduleScrollY += scrollStep;
+      
+      // When we've scrolled past the entire original list, reset to 0
+      if (currentScheduleScrollY >= totalScheduleHeight) {
+        currentScheduleScrollY -= totalScheduleHeight;
+      }
+    } else {
+      currentScheduleScrollY = 0.0f;
+    }
+
+    // Draw the list twice to create the wrap-around effect
+    for (int i = 0; i < courseCount * 2; i++) {
+      int idx = i % courseCount;
+      int y = 74 + 2 + i * 18 - (int)currentScheduleScrollY;
+      
+      // Skip items that are too far out of bounds
+      if (y > 128 + 18) continue; 
+      if (y < 74 - 18) continue;  
+      
+      if (y > 40 && y < 128) {
+        bool isCurrent = (idx == currentCourseIndex);
+        bool isPast = (idx < currentCourseIndex) || (currentCourseIndex == -1 && idx < nextCourseIndex);
+
+        if (isCurrent) {
+          canvas->fillRoundRect(4, y, 128 - 8, 16, 2, COLOR_GRAY_800);
+          u8g2Fonts.setForegroundColor(COLOR_WHITE);
+        } else if (isPast) {
+          u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
+        } else {
+          u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
+        }
+        u8g2Fonts.setCursor(6, y + 12);
+        u8g2Fonts.print(dailyCourses[idx].startTime);
+        u8g2Fonts.setCursor(4 + 36, y + 12);
+        u8g2Fonts.print(fitTextToWidth(dailyCourses[idx].name, 128 - 8 - 36));
+      }
+    }
+  }
+
   // Section 1: Top Bar (0 - 21)
+  canvas->fillRect(0, 0, 128, 22, COLOR_BG);
   u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
   u8g2Fonts.setCursor(4, 16);
@@ -546,7 +678,13 @@ void updateDisplay() {
   u8g2Fonts.print(tempText);
 
   int iconX = weatherX - 14;
-  if (wText.indexOf("雨") != -1) {
+  if (wText.indexOf("雪") != -1) {
+    drawSnowIcon(iconX, 4, COLOR_WHITE);
+  } else if (wText.indexOf("雾") != -1) {
+    drawFogIcon(iconX, 4, COLOR_GRAY_300);
+  } else if (wText.indexOf("风") != -1) {
+    drawWindIcon(iconX, 4, COLOR_CYAN);
+  } else if (wText.indexOf("雨") != -1) {
     drawRainIcon(iconX, 4, COLOR_BLUE);
   } else if (wText.indexOf("云") != -1 || wText.indexOf("阴") != -1) {
     drawCloudIcon(iconX, 4, COLOR_GRAY_300);
@@ -557,6 +695,7 @@ void updateDisplay() {
   canvas->drawLine(0, 21, 127, 21, COLOR_GRAY_800);
 
   // Section 2: Middle Section (22 - 73)
+  canvas->fillRect(0, 22, 128, 52, COLOR_BG);
   String statusText;
   uint16_t statusColor;
   String mainText;
@@ -615,136 +754,120 @@ void updateDisplay() {
     progressColor = COLOR_GRAY_800;
   }
 
-  u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2Fonts.setForegroundColor(statusColor);
-  u8g2Fonts.setCursor(4, 22 + 12);
-  u8g2Fonts.print(statusText);
-
-  u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
-  u8g2Fonts.setForegroundColor(COLOR_WHITE);
-  
-  int mainTextWidth = u8g2Fonts.getUTF8Width(mainText.c_str());
-  int maxMainTextWidth = 120; // 128 - 4 - 4
-  
-  if (mainTextWidth > maxMainTextWidth) {
-    unsigned long now = millis();
-    unsigned long dt = now - lastCurrentCourseMarqueeTime;
-    if (lastCurrentCourseMarqueeTime == 0) dt = 0;
-    lastCurrentCourseMarqueeTime = now;
-    
-    currentCourseMarqueeOffset += (dt / 1000.0f) * 30.0f; // 30 pixels per second
-    if (currentCourseMarqueeOffset > mainTextWidth + 20) {
-      currentCourseMarqueeOffset = -maxMainTextWidth;
-    }
-    
-    u8g2Fonts.setCursor(4 - (int)currentCourseMarqueeOffset, 22 + 30);
-    u8g2Fonts.print(mainText);
-    
-    // Clear left and right margins for the marquee
-    canvas->fillRect(0, 22 + 14, 4, 18, COLOR_BG);
-    canvas->fillRect(124, 22 + 14, 4, 18, COLOR_BG);
-  } else {
+  if (lastMainText != "" && (lastMainText != mainText || lastStatusText != statusText)) {
+    isStateAnimating = true;
+    stateAnimStartTime = millis();
+    animPrevStatusText = lastStatusText;
+    animPrevMainText = lastMainText;
+    animPrevStatusColor = lastStatusColor;
     currentCourseMarqueeOffset = 0.0f;
-    lastCurrentCourseMarqueeTime = 0;
-    u8g2Fonts.setCursor(4, 22 + 30);
+  }
+  lastStatusText = statusText;
+  lastMainText = mainText;
+  lastStatusColor = statusColor;
+
+  int yOffset = 0;
+  if (isStateAnimating) {
+    unsigned long elapsed = millis() - stateAnimStartTime;
+    if (elapsed < 500) {
+      float t = (float)elapsed / 500.0f;
+      float easeOut = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+      yOffset = (int)(easeOut * 24.0f);
+    } else {
+      isStateAnimating = false;
+    }
+  }
+
+  if (isStateAnimating) {
+    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2Fonts.setForegroundColor(animPrevStatusColor);
+    u8g2Fonts.setCursor(4, 22 + 12 - yOffset);
+    u8g2Fonts.print(animPrevStatusText);
+
+    u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
+    u8g2Fonts.setForegroundColor(COLOR_WHITE);
+    u8g2Fonts.setCursor(4, 22 + 30 - yOffset);
+    u8g2Fonts.print(animPrevMainText);
+
+    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2Fonts.setForegroundColor(statusColor);
+    u8g2Fonts.setCursor(4, 22 + 12 + 24 - yOffset);
+    u8g2Fonts.print(statusText);
+
+    u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
+    u8g2Fonts.setForegroundColor(COLOR_WHITE);
+    u8g2Fonts.setCursor(4, 22 + 30 + 24 - yOffset);
     u8g2Fonts.print(mainText);
+  } else {
+    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2Fonts.setForegroundColor(statusColor);
+    u8g2Fonts.setCursor(4, 22 + 12);
+    u8g2Fonts.print(statusText);
+
+    u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
+    u8g2Fonts.setForegroundColor(COLOR_WHITE);
+    
+    int mainTextWidth = u8g2Fonts.getUTF8Width(mainText.c_str());
+    int maxMainTextWidth = 120;
+    
+    if (mainTextWidth > maxMainTextWidth) {
+      unsigned long now = millis();
+      unsigned long dt = now - lastCurrentCourseMarqueeTime;
+      if (lastCurrentCourseMarqueeTime == 0) dt = 0;
+      lastCurrentCourseMarqueeTime = now;
+      
+      currentCourseMarqueeOffset += (dt / 1000.0f) * 30.0f;
+      if (currentCourseMarqueeOffset > mainTextWidth + 20) {
+        currentCourseMarqueeOffset = -maxMainTextWidth;
+      }
+      
+      u8g2Fonts.setCursor(4 - (int)currentCourseMarqueeOffset, 22 + 30);
+      u8g2Fonts.print(mainText);
+      
+      canvas->fillRect(0, 22 + 14, 4, 18, COLOR_BG);
+      canvas->fillRect(124, 22 + 14, 4, 18, COLOR_BG);
+    } else {
+      currentCourseMarqueeOffset = 0.0f;
+      lastCurrentCourseMarqueeTime = 0;
+      u8g2Fonts.setCursor(4, 22 + 30);
+      u8g2Fonts.print(mainText);
+    }
   }
 
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
-  if (timeRangeText.length() > 0) {
-    if (currentScenario == SCENARIO_IN_CLASS) {
-      drawClockIcon(4, 22 + 35, COLOR_GRAY_400);
-    } else {
-      drawClockIcon(4, 22 + 36, COLOR_GRAY_400);
-      u8g2Fonts.setCursor(4 + 14, 22 + 44);
-      u8g2Fonts.print(timeRangeText);
+  
+  if (!isStateAnimating) {
+    if (timeRangeText.length() > 0) {
+      if (currentScenario == SCENARIO_IN_CLASS) {
+        // Hide time range for IN_CLASS
+      } else {
+        drawClockIcon(4, 22 + 35, COLOR_GRAY_400);
+        u8g2Fonts.setCursor(4 + 14, 22 + 44);
+        u8g2Fonts.print(timeRangeText);
+      }
     }
-  }
 
-  if (remainingText.length() > 0) {
-    if (currentScenario == SCENARIO_IN_CLASS) {
-      int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
-      u8g2Fonts.setCursor((128 - remWidth) / 2 + 4, 22 + 44);
-      u8g2Fonts.print(remainingText);
-    } else {
-      int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
-      u8g2Fonts.setCursor(128 - 4 - remWidth, 22 + 44);
-      u8g2Fonts.print(remainingText);
+    if (remainingText.length() > 0) {
+      if (currentScenario == SCENARIO_IN_CLASS) {
+        int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
+        int startX = (128 - (14 + remWidth)) / 2;
+        drawClockIcon(startX, 22 + 34, COLOR_GRAY_400);
+        u8g2Fonts.setCursor(startX + 14, 22 + 44);
+        u8g2Fonts.print(remainingText);
+      } else {
+        int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
+        u8g2Fonts.setCursor(128 - 4 - remWidth, 22 + 44);
+        u8g2Fonts.print(remainingText);
+      }
     }
-  }
 
-  canvas->fillRoundRect(4, 22 + 48, 128 - 8, 2, 1, COLOR_GRAY_800);
-  int pw = (128 - 8) * progressPercent / 100;
-  if (pw > 0) canvas->fillRoundRect(4, 22 + 48, pw, 2, 1, progressColor);
+    canvas->fillRoundRect(4, 22 + 48, 128 - 8, 2, 1, COLOR_GRAY_800);
+    int pw = (128 - 8) * progressPercent / 100;
+    if (pw > 0) canvas->fillRoundRect(4, 22 + 48, pw, 2, 1, progressColor);
+  }
 
   canvas->drawLine(0, 73, 127, 73, COLOR_GRAY_800);
-
-  // Section 3: Bottom Section (Schedule) (74 - 107)
-  u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
-  drawBookIcon(4, 74 + 2, COLOR_GRAY_500);
-  u8g2Fonts.setCursor(4 + 14, 74 + 12);
-  u8g2Fonts.print("今日课表");
-
-  int scheduleItemsCount = 0;
-  String schedTimes[2];
-  String schedNames[2];
-  bool highlightFirst = false;
-
-  if (currentScenario == SCENARIO_IN_CLASS || currentScenario == SCENARIO_BREAK) {
-    if (nextCourseIndex != -1) {
-      schedTimes[0] = dailyCourses[nextCourseIndex].startTime;
-      schedNames[0] = dailyCourses[nextCourseIndex].name;
-      scheduleItemsCount = 1;
-      highlightFirst = true;
-      if (nextCourseIndex + 1 < courseCount) {
-        schedTimes[1] = dailyCourses[nextCourseIndex + 1].startTime;
-        schedNames[1] = dailyCourses[nextCourseIndex + 1].name;
-        scheduleItemsCount = 2;
-      }
-    } else {
-      // 没有下一节课了
-      schedTimes[0] = "";
-      schedNames[0] = "无后续课程";
-      scheduleItemsCount = 1;
-    }
-  } else if (currentScenario == SCENARIO_END_OF_DAY) {
-    if (tomorrowCourseCount > 0) {
-      for (int i = 0; i < min(2, tomorrowCourseCount); i++) {
-        schedTimes[i] = "明日 " + tomorrowCourses[i].startTime;
-        schedNames[i] = tomorrowCourses[i].name;
-        scheduleItemsCount++;
-      }
-    } else {
-      schedTimes[0] = "";
-      schedNames[0] = "明日无课安排";
-      scheduleItemsCount = 1;
-    }
-    highlightFirst = false;
-  } else if (currentScenario == SCENARIO_NO_CLASSES) {
-    schedTimes[0] = "";
-    schedNames[0] = "今日无课安排";
-    scheduleItemsCount = 1;
-  }
-
-  int schedY = 74 + 16;
-  for (int i = 0; i < scheduleItemsCount; i++) {
-    bool highlight = (i == 0 && highlightFirst);
-    if (highlight) {
-      canvas->fillRoundRect(4, schedY - 1, 128 - 8, 14, 2, COLOR_GRAY_800);
-      u8g2Fonts.setForegroundColor(COLOR_WHITE);
-    } else {
-      u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
-    }
-    u8g2Fonts.setCursor(6, schedY + 11);
-    u8g2Fonts.print(schedTimes[i]);
-    
-    u8g2Fonts.setCursor(4 + 36, schedY + 11);
-    u8g2Fonts.print(fitTextToWidth(schedNames[i], 128 - 8 - 36));
-    
-    schedY += 16;
-  }
 
   // Section 4: Radio Marquee (108 - 127)
   canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
@@ -786,7 +909,6 @@ void updateDisplay() {
     u8g2Fonts.setCursor(footerLeft - intOffset, footerY);
     u8g2Fonts.print(marqueeRenderStr);
     
-    // Draw second copy if needed
     if (intOffset > marqueeTextWidth - footerWidth) {
       u8g2Fonts.setCursor(footerLeft - intOffset + totalMarqueeW, footerY);
       u8g2Fonts.print(marqueeRenderStr);
@@ -823,3 +945,4 @@ void loop() {
 
   delay(1);
 }
+
