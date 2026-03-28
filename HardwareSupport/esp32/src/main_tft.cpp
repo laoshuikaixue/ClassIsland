@@ -170,7 +170,7 @@ void setup() {
     for (int i = 0; i < (dotCount % 4); i++) {
       dots += ".";
     }
-    drawBootText("SYSTEM BOOTING  [OK]", "WLAN MAC INIT   [OK]", "WIFI: " + String(ssid), "DHCP REQ" + dots);
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN MAC INIT [OK]", "WIFI: " + String(ssid), "DHCP REQ" + dots);
     delay(300);
     dotCount++;
     Serial.print(".");
@@ -181,7 +181,7 @@ void setup() {
   Serial.print("IP: ");
   Serial.println(WiFi.localIP());
 
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
+  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
 
   configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
 
@@ -192,12 +192,12 @@ void setup() {
     for (int i = 0; i < (retry % 4); i++) {
       dots += ".";
     }
-    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
     delay(500);
     retry++;
   }
 
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC        [OK]" : "NTP SYNC      [FAIL]");
+  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC       [OK]" : "NTP SYNC     [FAIL]");
   delay(800);
 
   fetchVoiceHubData();
@@ -653,15 +653,25 @@ void updateDisplay() {
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
   if (timeRangeText.length() > 0) {
-    drawClockIcon(4, 22 + 36, COLOR_GRAY_400);
-    u8g2Fonts.setCursor(4 + 14, 22 + 44);
-    u8g2Fonts.print(timeRangeText);
+    if (currentScenario == SCENARIO_IN_CLASS) {
+      drawClockIcon(4, 22 + 35, COLOR_GRAY_400);
+    } else {
+      drawClockIcon(4, 22 + 36, COLOR_GRAY_400);
+      u8g2Fonts.setCursor(4 + 14, 22 + 44);
+      u8g2Fonts.print(timeRangeText);
+    }
   }
 
   if (remainingText.length() > 0) {
-    int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
-    u8g2Fonts.setCursor(128 - 4 - remWidth, 22 + 44);
-    u8g2Fonts.print(remainingText);
+    if (currentScenario == SCENARIO_IN_CLASS) {
+      int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
+      u8g2Fonts.setCursor((128 - remWidth) / 2 + 4, 22 + 44);
+      u8g2Fonts.print(remainingText);
+    } else {
+      int remWidth = u8g2Fonts.getUTF8Width(remainingText.c_str());
+      u8g2Fonts.setCursor(128 - 4 - remWidth, 22 + 44);
+      u8g2Fonts.print(remainingText);
+    }
   }
 
   canvas->fillRoundRect(4, 22 + 48, 128 - 8, 2, 1, COLOR_GRAY_800);
@@ -693,14 +703,29 @@ void updateDisplay() {
         schedNames[1] = dailyCourses[nextCourseIndex + 1].name;
         scheduleItemsCount = 2;
       }
+    } else {
+      // 没有下一节课了
+      schedTimes[0] = "";
+      schedNames[0] = "无后续课程";
+      scheduleItemsCount = 1;
     }
   } else if (currentScenario == SCENARIO_END_OF_DAY) {
-    for (int i = 0; i < min(2, tomorrowCourseCount); i++) {
-      schedTimes[i] = "明日 " + tomorrowCourses[i].startTime;
-      schedNames[i] = tomorrowCourses[i].name;
-      scheduleItemsCount++;
+    if (tomorrowCourseCount > 0) {
+      for (int i = 0; i < min(2, tomorrowCourseCount); i++) {
+        schedTimes[i] = "明日 " + tomorrowCourses[i].startTime;
+        schedNames[i] = tomorrowCourses[i].name;
+        scheduleItemsCount++;
+      }
+    } else {
+      schedTimes[0] = "";
+      schedNames[0] = "明日无课安排";
+      scheduleItemsCount = 1;
     }
     highlightFirst = false;
+  } else if (currentScenario == SCENARIO_NO_CLASSES) {
+    schedTimes[0] = "";
+    schedNames[0] = "今日无课安排";
+    scheduleItemsCount = 1;
   }
 
   int schedY = 74 + 16;
