@@ -592,13 +592,13 @@ public partial class App : AppBase, IAppHost
         AppBase.CurrentLifetime = ClassIsland.Core.Enums.ApplicationLifetime.StartingOffline;
         Logger = GetService<ILogger<App>>();
         Logger.LogInformation("ClassIsland {}", AppVersionLong);
-        foreach (var plugin in PluginService.PluginLoadedStatus.Where(p => p.Key.LoadStatus == PluginLoadStatus.Error))
+        foreach (var plugin in PluginService.PluginLoadedStatus.Where(p => p.LoadStatus == PluginLoadStatus.Error))
         {
-            Logger.LogWarning("插件加载失败:{PluginName}({PluginID},{PluginVersion}):{PluginLoadException}", plugin.Value.Name,plugin.Value.Id, plugin.Value.Version, plugin.Key.Exception);
+            Logger.LogWarning("插件加载失败:{PluginName}({PluginID},{PluginVersion}):{PluginLoadException}", plugin.Manifest.Name,plugin.Manifest.Id, plugin.Manifest.Version, plugin.Exception);
         }
         Logger.LogInformation(
-            PluginService.PluginLoadedStatus.Any(p => p.Key.LoadStatus == PluginLoadStatus.Loaded) ? "此次会话已加载插件:{loadedPlugin}" : "此次会话没有加载插件。",
-            string.Join(",", PluginService.PluginLoadedStatus.Where(p => p.Key.LoadStatus == PluginLoadStatus.Loaded).Select(p => $"{p.Value.Name}({p.Value.Id},{p.Value.Version})"))
+            PluginService.PluginLoadedStatus.Any(p => p.LoadStatus == PluginLoadStatus.Loaded) ? "此次会话已加载插件:{loadedPlugin}" : "此次会话没有加载插件。",
+            string.Join(",", PluginService.PluginLoadedStatus.Where(p => p.LoadStatus == PluginLoadStatus.Loaded).Select(p => $"{p.Manifest.Name}({p.Manifest.Id},{p.Manifest.Version})"))
         );
         var lifetime = IAppHost.GetService<IHostApplicationLifetime>();
         lifetime.ApplicationStarted.Register(() => Logger.LogInformation("App started."));
@@ -658,6 +658,10 @@ public partial class App : AppBase, IAppHost
 
         CurrentLifetime = Core.Enums.ApplicationLifetime.StartingOnline;
         Logger.LogInformation("初始化应用。");
+        if (Settings.IsSplashEnabled)
+        {
+            await GetService<ISplashService>().StartSplash();
+        }
 
         // 提前初始化好音频服务，防止在其他地方出现重复初始化的问题
         IAppHost.GetService<IAudioService>();
@@ -683,7 +687,7 @@ public partial class App : AppBase, IAppHost
             spanCheckUpdate.Finish();
             if (r)
             {
-                GetService<ISplashService>().EndSplash();
+                await GetService<ISplashService>().EndSplash();
                 return;
             }
         }
@@ -703,7 +707,7 @@ public partial class App : AppBase, IAppHost
         {
             if (Settings.IsSplashEnabled)
             {
-                GetService<ISplashService>().EndSplash();
+                await GetService<ISplashService>().EndSplash();
             }
 
             if (System.OperatingSystem.IsLinux() && GlobalStorageService.GetValue("IgnoreQtScaling") != "1")
