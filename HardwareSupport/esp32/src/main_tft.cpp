@@ -7,6 +7,10 @@
 #include <Adafruit_ST7735.h>
 #include <U8g2_for_Adafruit_GFX.h>
 #include <time.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
 
 const char* ssid = "LHZX";
 const char* password = "a12345678";
@@ -87,6 +91,89 @@ int marqueeTextWidth = 0;
 float currentCourseMarqueeOffset = 0.0f;
 unsigned long lastCurrentCourseMarqueeTime = 0;
 
+// BLE Heart Rate State
+static BLEUUID heartRateServiceUUID("180d");
+static BLEUUID heartRateCharUUID("2a37");
+
+bool doConnect = false;
+bool bleConnected = false;
+bool doScan = false;
+BLERemoteCharacteristic* pRemoteCharacteristic;
+BLEAdvertisedDevice* myDevice;
+
+int currentHeartRate = 0;
+unsigned long lastHeartRateTime = 0;
+bool heartBeatState = false;
+
+static void notifyCallback(
+  BLERemoteCharacteristic* pBLERemoteCharacteristic,
+  uint8_t* pData,
+  size_t length,
+  bool isNotify) {
+    if (length > 1) {
+      // The first byte contains flags, 0th bit indicates 8-bit or 16-bit HR format
+      if ((pData[0] & 0x01) == 0) {
+        currentHeartRate = pData[1];
+      } else if (length > 2) {
+        currentHeartRate = (pData[2] << 8) | pData[1];
+      }
+      lastHeartRateTime = millis();
+      heartBeatState = !heartBeatState; // Toggle for animation
+    }
+}
+
+class MyClientCallback : public BLEClientCallbacks {
+  void onConnect(BLEClient* pclient) {
+    bleConnected = true;
+    Serial.println("BLE Heart Rate Sensor Connected");
+  }
+
+  void onDisconnect(BLEClient* pclient) {
+    bleConnected = false;
+    currentHeartRate = 0;
+    Serial.println("BLE Heart Rate Sensor Disconnected");
+    doScan = true; // Restart scanning
+  }
+};
+
+bool connectToServer() {
+    Serial.print("Forming a connection to ");
+    Serial.println(myDevice->getAddress().toString().c_str());
+    
+    BLEClient*  pClient  = BLEDevice::createClient();
+    pClient->setClientCallbacks(new MyClientCallback());
+
+    if (!pClient->connect(myDevice)) return false;
+    
+    BLERemoteService* pRemoteService = pClient->getService(heartRateServiceUUID);
+    if (pRemoteService == nullptr) {
+      pClient->disconnect();
+      return false;
+    }
+
+    pRemoteCharacteristic = pRemoteService->getCharacteristic(heartRateCharUUID);
+    if (pRemoteCharacteristic == nullptr) {
+      pClient->disconnect();
+      return false;
+    }
+
+    if(pRemoteCharacteristic->canNotify()) {
+      pRemoteCharacteristic->registerForNotify(notifyCallback);
+    }
+    return true;
+}
+
+class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(heartRateServiceUUID)) {
+      BLEDevice::getScan()->stop();
+      myDevice = new BLEAdvertisedDevice(advertisedDevice);
+      doConnect = true;
+      doScan = false;
+    }
+  }
+};
+
 unsigned long lastCourseFetchTime = 0;
 unsigned long lastDisplayTime = 0;
 unsigned long lastScheduleScrollTime = 0;
@@ -133,6 +220,7 @@ void drawBootText(const String& line1, const String& line2, const String& line3,
 }
 
 void setup() {
+  Serial.setRxBufferSize(2048);
   Serial.begin(115200);
 
   pinMode(BLK_PIN, OUTPUT);
@@ -213,7 +301,17 @@ void setup() {
   fetchVoiceHubData();
   fetchCourseData();
   lastCourseFetchTime = millis();
-  delay(500);
+  
+  // Initialize BLE *after* fetching initial data so UI can show up quickly
+  BLEDevice::init("");
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setInterval(1349);
+  pBLEScan->setWindow(449);
+  pBLEScan->setActiveScan(true);
+  doScan = true;
+  
+  delay(100);
 }
 
 void fetchCourseData() {
@@ -536,13 +634,62 @@ void drawFogIcon(int x, int y, uint16_t color) {
   canvas->drawLine(x + 4, y + 10, x + 8, y + 10, color);
 }
 
-void drawWarningIcon(int x, int y, uint16_t bgColor, uint16_t fgColor) {
+void drawWarningIcon(int x, int y, uint16_t bgColor, uint16_t fgColor, const String& warningText) {
   // Draw a filled circle as background
   canvas->fillCircle(x + 6, y + 6, 6, bgColor);
   
-  // Exclamation mark inside
-  canvas->drawLine(x + 6, y + 3, x + 6, y + 6, fgColor);
-  canvas->drawPixel(x + 6, y + 8, fgColor);
+  if (warningText.indexOf("风") != -1) {
+    // Small wind icon inside
+    canvas->drawLine(x + 3, y + 4, x + 7, y + 4, fgColor);
+    canvas->drawLine(x + 7, y + 4, x + 8, y + 5, fgColor);
+    canvas->drawLine(x + 5, y + 6, x + 9, y + 6, fgColor);
+    canvas->drawLine(x + 9, y + 6, x + 8, y + 7, fgColor);
+    canvas->drawLine(x + 4, y + 8, x + 7, y + 8, fgColor);
+  } else if (warningText.indexOf("雾") != -1) {
+    // Small fog icon inside
+    canvas->drawLine(x + 4, y + 4, x + 8, y + 4, fgColor);
+    canvas->drawLine(x + 3, y + 6, x + 9, y + 6, fgColor);
+    canvas->drawLine(x + 4, y + 8, x + 8, y + 8, fgColor);
+  } else if (warningText.indexOf("雪") != -1) {
+    // Small snow icon inside
+    canvas->drawLine(x + 6, y + 3, x + 6, y + 9, fgColor);
+    canvas->drawLine(x + 3, y + 6, x + 9, y + 6, fgColor);
+    canvas->drawLine(x + 4, y + 4, x + 8, y + 8, fgColor);
+    canvas->drawLine(x + 4, y + 8, x + 8, y + 4, fgColor);
+  } else if (warningText.indexOf("雨") != -1) {
+    // Small rain icon inside
+    canvas->drawLine(x + 4, y + 7, x + 3, y + 9, fgColor);
+    canvas->drawLine(x + 6, y + 7, x + 5, y + 9, fgColor);
+    canvas->drawLine(x + 8, y + 7, x + 7, y + 9, fgColor);
+    canvas->drawLine(x + 4, y + 5, x + 8, y + 5, fgColor); // cloud base
+  } else if (warningText.indexOf("雷") != -1) {
+    // Lightning icon inside
+    canvas->drawLine(x + 6, y + 3, x + 4, y + 6, fgColor);
+    canvas->drawLine(x + 4, y + 6, x + 7, y + 6, fgColor);
+    canvas->drawLine(x + 7, y + 6, x + 5, y + 9, fgColor);
+  } else if (warningText.indexOf("冰雹") != -1) {
+    // Hail icon inside
+    canvas->drawPixel(x + 4, y + 4, fgColor);
+    canvas->drawPixel(x + 8, y + 5, fgColor);
+    canvas->drawPixel(x + 6, y + 7, fgColor);
+    canvas->drawPixel(x + 5, y + 9, fgColor);
+  } else if (warningText.indexOf("霜冻") != -1 || warningText.indexOf("寒潮") != -1) {
+    // Frost/Cold wave (similar to snow/ice)
+    canvas->drawLine(x + 4, y + 8, x + 8, y + 8, fgColor);
+    canvas->drawLine(x + 6, y + 6, x + 6, y + 8, fgColor);
+    canvas->drawLine(x + 4, y + 6, x + 6, y + 6, fgColor);
+  } else if (warningText.indexOf("高温") != -1) {
+    // High temp / Sun icon
+    canvas->drawCircle(x + 6, y + 6, 2, fgColor);
+    canvas->drawPixel(x + 6, y + 2, fgColor);
+    canvas->drawPixel(x + 6, y + 10, fgColor);
+    canvas->drawPixel(x + 2, y + 6, fgColor);
+    canvas->drawPixel(x + 10, y + 6, fgColor);
+  } else {
+    // Fallback: Exclamation mark inside
+    canvas->drawLine(x + 6, y + 3, x + 6, y + 6, fgColor);
+    canvas->drawPixel(x + 6, y + 8, fgColor);
+  }
 }
 
 String animPrevStatusText = "";
@@ -554,6 +701,247 @@ String lastStatusText = "";
 String lastMainText = "";
 uint16_t lastStatusColor = COLOR_WHITE;
 float currentScheduleScrollY = 0.0f;
+
+// Lyric State
+char serialLine[4096];
+size_t serialLinePos = 0;
+String songName = "";
+String artist = "";
+String currentLyric = "";
+String nextLyric = "";
+String prevLyric = "";
+String playedLyric = "";
+String currentWord = "";
+bool isPlaying = false;
+uint32_t progressMs = 0;
+uint32_t durationMs = 0;
+uint32_t prevLyricStartMs = 0;
+uint32_t prevLyricEndMs = 0;
+uint32_t currentLyricStartMs = 0;
+uint32_t currentLyricEndMs = 0;
+uint32_t nextLyricStartMs = 0;
+uint32_t nextLyricEndMs = 0;
+uint32_t currentWordStartMs = 0;
+uint32_t currentWordEndMs = 0;
+uint32_t progressSyncAt = 0;
+uint32_t lastLyricPacketAt = 0;
+uint32_t lyricAnimStartMs = 0;
+const uint32_t LYRIC_TIMEOUT_MS = 5000;
+
+uint32_t currentDisplayProgressMs() {
+  uint32_t displayProgress = progressMs;
+  if (isPlaying) {
+    uint32_t elapsed = millis() - progressSyncAt;
+    displayProgress += elapsed;
+  }
+  if (durationMs > 0 && displayProgress > durationMs) {
+    displayProgress = durationMs;
+  }
+  return displayProgress;
+}
+
+void updateLyricFromJson(const char* line) {
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, line);
+  if (err) return;
+  
+  uint32_t newStartMs = doc["currentLyricStartMs"] | 0;
+  if (newStartMs != currentLyricStartMs) {
+    if (currentLyricStartMs != 0 && newStartMs > currentLyricStartMs && (newStartMs - currentLyricStartMs) < 30000) {
+      prevLyric = currentLyric;
+      prevLyricStartMs = currentLyricStartMs;
+      prevLyricEndMs = currentLyricEndMs;
+      lyricAnimStartMs = millis();
+    } else {
+      lyricAnimStartMs = 0;
+    }
+  }
+
+  songName = doc["songName"] | "";
+  artist = doc["artist"] | "";
+  currentLyric = doc["currentLyric"] | "";
+  nextLyric = doc["nextLyric"] | "";
+  playedLyric = doc["playedLyric"] | "";
+  currentWord = doc["currentWord"] | "";
+  
+  // Clean up newlines and tabs
+  currentLyric.replace("\r", " "); currentLyric.replace("\n", " "); currentLyric.replace("\t", " ");
+  nextLyric.replace("\r", " "); nextLyric.replace("\n", " "); nextLyric.replace("\t", " ");
+  
+  currentLyricStartMs = newStartMs;
+  currentLyricEndMs = doc["currentLyricEndMs"] | 0;
+  nextLyricStartMs = doc["nextLyricStartMs"] | 0;
+  nextLyricEndMs = doc["nextLyricEndMs"] | 0;
+  currentWordStartMs = doc["currentWordStartMs"] | 0;
+  currentWordEndMs = doc["currentWordEndMs"] | 0;
+  isPlaying = doc["isPlaying"] | false;
+  progressMs = doc["progressMs"] | 0;
+  durationMs = doc["durationMs"] | 0;
+  lastLyricPacketAt = millis();
+  progressSyncAt = lastLyricPacketAt;
+}
+
+void readSerialLines() {
+  while (Serial.available() > 0) {
+    char c = static_cast<char>(Serial.read());
+    if (c == '\n') {
+      if (serialLinePos > 0) {
+        serialLine[serialLinePos] = '\0';
+        updateLyricFromJson(serialLine);
+        serialLinePos = 0;
+      }
+      continue;
+    }
+    if (c != '\r') {
+      if (serialLinePos + 1 < sizeof(serialLine)) {
+        serialLine[serialLinePos++] = c;
+      } else {
+        serialLinePos = 0;
+      }
+    }
+  }
+}
+
+// Clock Animation State
+char lastTimeChars[9] = "00:00:00";
+unsigned long clockAnimStart[8] = {0};
+bool isClockAnimating[8] = {false};
+
+void drawArc(int x, int y, int r, int thickness, int startAngle, int endAngle, uint16_t color) {
+  if (startAngle > endAngle) {
+    int temp = startAngle;
+    startAngle = endAngle;
+    endAngle = temp;
+  }
+  for (int i = startAngle; i <= endAngle; i++) {
+    float rad = i * PI / 180.0;
+    float cosRad = cos(rad);
+    float sinRad = sin(rad);
+    for (int t = 0; t < thickness; t++) {
+      int px = x + (r - t) * cosRad;
+      int py = y + (r - t) * sinRad;
+      canvas->drawPixel(px, py, color);
+    }
+  }
+}
+
+void drawHeartIcon(int x, int y, uint16_t color, bool big) {
+  if (big) {
+    canvas->fillCircle(x + 3, y + 3, 2, color);
+    canvas->fillCircle(x + 7, y + 3, 2, color);
+    canvas->fillTriangle(x + 1, y + 4, x + 9, y + 4, x + 5, y + 9, color);
+  } else {
+    canvas->drawPixel(x + 2, y + 2, color);
+    canvas->drawPixel(x + 3, y + 2, color);
+    canvas->drawPixel(x + 6, y + 2, color);
+    canvas->drawPixel(x + 7, y + 2, color);
+    canvas->drawLine(x + 1, y + 3, x + 4, y + 3, color);
+    canvas->drawLine(x + 5, y + 3, x + 8, y + 3, color);
+    canvas->drawLine(x + 2, y + 4, x + 7, y + 4, color);
+    canvas->drawLine(x + 3, y + 5, x + 6, y + 5, color);
+    canvas->drawLine(x + 4, y + 6, x + 5, y + 6, color);
+    canvas->drawPixel(x + 5, y + 7, color);
+  }
+}
+
+void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t endMs, uint32_t displayProgress, bool isCurrentLine) {
+  if (text.length() == 0) return;
+  
+  u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+  int textWidth = u8g2Fonts.getUTF8Width(text.c_str());
+  int offset = 0;
+  
+  // Auto scroll long lyrics
+  if (textWidth > 128 && endMs > startMs) {
+    int overflow = textWidth - 128 + 12; // 12px margin
+    uint32_t progress = displayProgress;
+    if (progress < startMs) progress = startMs;
+    if (progress > endMs) progress = endMs;
+    uint32_t numerator = (progress - startMs) * static_cast<uint32_t>(overflow);
+    uint32_t denominator = endMs - startMs;
+    offset = denominator > 0 ? static_cast<int>(numerator / denominator) : 0;
+    if (offset < 0) offset = 0;
+    if (offset > overflow) offset = overflow;
+  }
+  
+  int drawX = 6 - offset;
+  
+  if (isCurrentLine && (playedLyric.length() > 0 || currentWord.length() > 0)) {
+    // Implement "brightness change" by drawing the played part in WHITE and unplayed in GRAY
+    String played = playedLyric;
+    String word = currentWord;
+    String rest = text;
+    
+    if (rest.startsWith(played)) {
+      rest = rest.substring(played.length());
+    }
+    if (rest.startsWith(word)) {
+      rest = rest.substring(word.length());
+    }
+    
+    int currentX = drawX;
+    
+    if (played.length() > 0) {
+      u8g2Fonts.setForegroundColor(COLOR_WHITE);
+      u8g2Fonts.setCursor(currentX, y);
+      u8g2Fonts.print(played);
+      currentX += u8g2Fonts.getUTF8Width(played.c_str());
+    }
+    
+    if (word.length() > 0) {
+      // The current word is transitioning, we draw it in CYAN to highlight it
+      u8g2Fonts.setForegroundColor(COLOR_CYAN);
+      u8g2Fonts.setCursor(currentX, y);
+      u8g2Fonts.print(word);
+      currentX += u8g2Fonts.getUTF8Width(word.c_str());
+    }
+    
+    if (rest.length() > 0) {
+      u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
+      u8g2Fonts.setCursor(currentX, y);
+      u8g2Fonts.print(rest);
+    }
+    
+    // Also keep the progress bar underneath for smooth pixel-perfect progress
+    int w1 = u8g2Fonts.getUTF8Width(playedLyric.c_str());
+    int w2 = u8g2Fonts.getUTF8Width(currentWord.c_str());
+    int highlightW = w1;
+    
+    if (currentWordEndMs > currentWordStartMs) {
+      uint32_t p = displayProgress;
+      if (p < currentWordStartMs) p = currentWordStartMs;
+      if (p > currentWordEndMs) p = currentWordEndMs;
+      uint32_t num = (p - currentWordStartMs) * static_cast<uint32_t>(w2);
+      uint32_t den = currentWordEndMs - currentWordStartMs;
+      highlightW += static_cast<int>(num / den);
+    }
+    
+    if (highlightW > 0) {
+      canvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
+    }
+  } else {
+    // Normal drawing
+    if (isCurrentLine) {
+      u8g2Fonts.setForegroundColor(COLOR_WHITE);
+    } else {
+      u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
+    }
+    u8g2Fonts.setCursor(drawX, y);
+    u8g2Fonts.print(text);
+    
+    if (isCurrentLine && endMs > startMs) {
+      uint32_t p = displayProgress;
+      if (p < startMs) p = startMs;
+      if (p > endMs) p = endMs;
+      uint32_t num = (p - startMs) * static_cast<uint32_t>(textWidth);
+      uint32_t den = endMs - startMs;
+      int highlightW = static_cast<int>(num / den);
+      if (highlightW > 0) {
+        canvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
+      }
+    }
+  }
+}
 
 void updateDisplay() {
   if (canvas == nullptr) return;
@@ -673,8 +1061,44 @@ void updateDisplay() {
   canvas->fillRect(0, 0, 128, 22, COLOR_BG);
   u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
-  u8g2Fonts.setCursor(4, 16);
-  u8g2Fonts.print(currentTimeStr);
+
+  // Animated Flip Clock logic
+  const char* curTimeChars = currentTimeStr.c_str();
+  int clockX = 4;
+  for (int i = 0; i < currentTimeStr.length() && i < 8; i++) {
+    char c = curTimeChars[i];
+    int charWidth = u8g2Fonts.getUTF8Width(String(c).c_str());
+    
+    if (c != lastTimeChars[i]) {
+      isClockAnimating[i] = true;
+      clockAnimStart[i] = millis();
+      lastTimeChars[i] = c;
+    }
+
+    if (isClockAnimating[i]) {
+      unsigned long elapsed = millis() - clockAnimStart[i];
+      if (elapsed < 200) {
+        float t = (float)elapsed / 200.0f;
+        int yOffset = (int)(t * 16.0f); // Scroll up effect
+        
+        // Simplified approach: just slide the new character in from the bottom.
+        u8g2Fonts.setForegroundColor(COLOR_WHITE);
+        u8g2Fonts.setCursor(clockX, 16 + 16 - yOffset);
+        u8g2Fonts.print(String(c));
+      } else {
+        isClockAnimating[i] = false;
+        u8g2Fonts.setForegroundColor(COLOR_WHITE);
+        u8g2Fonts.setCursor(clockX, 16);
+        u8g2Fonts.print(String(c));
+      }
+    } else {
+      u8g2Fonts.setForegroundColor(COLOR_WHITE);
+      u8g2Fonts.setCursor(clockX, 16);
+      u8g2Fonts.print(String(c));
+    }
+    
+    clockX += charWidth + 1; // 1px spacing
+  }
 
   String tempText = "24°";
   String wText = weatherStr;
@@ -704,12 +1128,6 @@ void updateDisplay() {
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   int tempW = u8g2Fonts.getUTF8Width(tempText.c_str());
   int weatherX = 128 - 4 - tempW;
-  
-  if (warningText.length() > 0) {
-    // Make room for the warning icon next to the temperature
-    weatherX -= 14; 
-    drawWarningIcon(128 - 4 - 12, 4, warningColor);
-  }
 
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
   u8g2Fonts.setCursor(weatherX, 16);
@@ -730,6 +1148,13 @@ void updateDisplay() {
     drawSunIcon(iconX, 4, COLOR_YELLOW);
   }
 
+  if (warningText.length() > 0) {
+    // Draw the warning icon to the left of the weather icon
+    int warningIconX = iconX - 16; 
+    uint16_t fgColor = (warningColor == COLOR_YELLOW || warningColor == COLOR_WHITE) ? COLOR_BG : COLOR_WHITE;
+    drawWarningIcon(warningIconX, 4, warningColor, fgColor, warningText);
+  }
+
   canvas->drawLine(0, 21, 127, 21, COLOR_GRAY_800);
 
   // Section 2: Middle Section (22 - 73)
@@ -740,6 +1165,20 @@ void updateDisplay() {
   String timeRangeText;
   String remainingText;
   uint16_t progressColor;
+  
+  // Calculate total day progress for circular arc
+  int totalDayProgressPercent = -1;
+  if (courseCount > 0) {
+    if (currentScenario == SCENARIO_END_OF_DAY) {
+      totalDayProgressPercent = 100;
+    } else if (currentScenario == SCENARIO_NO_CLASSES || currentScenario == SCENARIO_PRE_CLASS) {
+      totalDayProgressPercent = 0;
+    } else {
+      // Calculate based on index
+      int currentIndex = (currentCourseIndex >= 0) ? currentCourseIndex : nextCourseIndex;
+      totalDayProgressPercent = (currentIndex * 100) / courseCount;
+    }
+  }
 
   if (currentScenario == SCENARIO_IN_CLASS) {
     statusText = "正在上课";
@@ -914,69 +1353,173 @@ void updateDisplay() {
 
     canvas->fillRoundRect(4, 22 + 48, 128 - 8, 2, 1, COLOR_GRAY_800);
     int pw = (128 - 8) * progressPercent / 100;
-    if (pw > 0) canvas->fillRoundRect(4, 22 + 48, pw, 2, 1, progressColor);
+    
+    if (currentScenario == SCENARIO_IN_CLASS) {
+      // IN_CLASS: Progress bar grows from Left to Right
+      if (pw > 0) canvas->fillRoundRect(4, 22 + 48, pw, 2, 1, progressColor);
+    } else if (currentScenario == SCENARIO_BREAK || currentScenario == SCENARIO_PRE_CLASS) {
+      // NOT IN_CLASS: Progress bar shrinks from Right to Left
+      // Here progressPercent represents how much time has passed in the break
+      // So (100 - progressPercent) is how much is remaining
+      int remainingPw = (128 - 8) * (100 - progressPercent) / 100;
+      if (remainingPw > 0) {
+        // Draw from the right side towards the left
+        int startX = 4 + (128 - 8) - remainingPw;
+        canvas->fillRoundRect(startX, 22 + 48, remainingPw, 2, 1, progressColor);
+      }
+    } else {
+      // Other scenarios (End of day, No classes): full bar
+      if (pw > 0) canvas->fillRoundRect(4, 22 + 48, pw, 2, 1, progressColor);
+    }
+  }
+  
+  // Draw Circular Progress Bar for Total Day Progress (Top Right of Middle Section)
+  if (totalDayProgressPercent >= 0) {
+    int arcX = 128 - 14;
+    int arcY = 22 + 14;
+    int arcR = 8;
+    int arcThickness = 2;
+    
+    // Draw background track
+    drawArc(arcX, arcY, arcR, arcThickness, 0, 360, COLOR_GRAY_800);
+    
+    // Draw filled track
+    if (totalDayProgressPercent > 0) {
+      int endAngle = -90 + (totalDayProgressPercent * 360) / 100;
+      if (endAngle > 270) endAngle = 270;
+      drawArc(arcX, arcY, arcR, arcThickness, -90, endAngle, progressColor);
+    }
+  }
+
+  // Draw Heart Rate if available
+  if (bleConnected && currentHeartRate > 0) {
+    // If heart rate data is fresh (within 3 seconds)
+    if (millis() - lastHeartRateTime < 3000) {
+      int hrX = 128 - 44; 
+      int hrY = 22 + 6;  // Move further up
+      
+      u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+      u8g2Fonts.setForegroundColor(COLOR_PINK);
+      
+      // Draw animated heart
+      bool isBeat = heartBeatState;
+      drawHeartIcon(hrX - 12, hrY, COLOR_PINK, isBeat);
+      
+      // Draw HR value
+      String hrStr = String(currentHeartRate);
+      u8g2Fonts.setCursor(hrX, hrY + 10);
+      u8g2Fonts.print(hrStr);
+    }
   }
 
   canvas->drawLine(0, 73, 127, 73, COLOR_GRAY_800);
 
-  // Section 4: Radio Marquee (108 - 127)
-  canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
-  
-  String footerText = buildFooterText();
-  if (footerText != marqueeRenderStr) {
-    marqueeRenderStr = footerText;
-    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
-    marqueeTextWidth = u8g2Fonts.getUTF8Width(marqueeRenderStr.c_str());
-    marqueeOffset = 0.0f;
-    lastMarqueeTime = 0;
-  }
+  // Section 4: Radio Marquee (108 - 127) or Lyric Display
+  bool showLyrics = (lastLyricPacketAt > 0 && millis() - lastLyricPacketAt < LYRIC_TIMEOUT_MS);
 
-  unsigned long now = millis();
-  unsigned long dt = now - lastMarqueeTime;
-  if (lastMarqueeTime == 0) dt = 0;
-  lastMarqueeTime = now;
-
-  int footerWidth = 104;
-  int marqueeGap = 32;
-  int totalMarqueeW = marqueeTextWidth + marqueeGap;
-
-  if (marqueeTextWidth > footerWidth) {
-    marqueeOffset += (dt / 1000.0f) * 24.0f;
-    if (marqueeOffset >= totalMarqueeW) {
-      marqueeOffset -= totalMarqueeW;
-    }
-  } else {
-    marqueeOffset = 0.0f;
-  }
-
-  u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
-  u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
-  int footerY = 122;
-  int footerLeft = 24;
-
-  if (marqueeTextWidth > footerWidth) {
-    int intOffset = (int)marqueeOffset;
-    u8g2Fonts.setCursor(footerLeft - intOffset, footerY);
-    u8g2Fonts.print(marqueeRenderStr);
+  if (showLyrics) {
+    canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
+    canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
     
-    if (intOffset > marqueeTextWidth - footerWidth) {
-      u8g2Fonts.setCursor(footerLeft - intOffset + totalMarqueeW, footerY);
+    uint32_t currentDispMs = currentDisplayProgressMs();
+    
+    int yOffset = 0;
+    if (lyricAnimStartMs > 0) {
+      uint32_t elapsed = millis() - lyricAnimStartMs;
+      if (elapsed < 300) {
+        float t = (float)elapsed / 300.0f;
+        float invT = 1.0f - t;
+        float easeOut = 1.0f - (invT * invT * invT);
+        yOffset = (int)((1.0f - easeOut) * 16.0f);
+      } else {
+        lyricAnimStartMs = 0;
+      }
+    }
+
+    int baseTextY = 124;
+
+    if (lyricAnimStartMs > 0 && prevLyric.length() > 0) {
+      drawTimedLyricTFT(baseTextY - 16 + yOffset, prevLyric, prevLyricStartMs, prevLyricEndMs, currentDispMs, false);
+    }
+    
+    drawTimedLyricTFT(baseTextY + yOffset, currentLyric, currentLyricStartMs, currentLyricEndMs, currentDispMs, true);
+    
+  } else {
+    canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
+    
+    String footerText = buildFooterText();
+    if (footerText != marqueeRenderStr) {
+      marqueeRenderStr = footerText;
+      u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+      marqueeTextWidth = u8g2Fonts.getUTF8Width(marqueeRenderStr.c_str());
+      marqueeOffset = 0.0f;
+      lastMarqueeTime = 0;
+    }
+
+    unsigned long now = millis();
+    unsigned long dt = now - lastMarqueeTime;
+    if (lastMarqueeTime == 0) dt = 0;
+    lastMarqueeTime = now;
+
+    int footerWidth = 104;
+    int marqueeGap = 32;
+    int totalMarqueeW = marqueeTextWidth + marqueeGap;
+
+    if (marqueeTextWidth > footerWidth) {
+      marqueeOffset += (dt / 1000.0f) * 24.0f;
+      if (marqueeOffset >= totalMarqueeW) {
+        marqueeOffset -= totalMarqueeW;
+      }
+    } else {
+      marqueeOffset = 0.0f;
+    }
+
+    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
+    int footerY = 122;
+    int footerLeft = 24;
+
+    if (marqueeTextWidth > footerWidth) {
+      int intOffset = (int)marqueeOffset;
+      u8g2Fonts.setCursor(footerLeft - intOffset, footerY);
+      u8g2Fonts.print(marqueeRenderStr);
+      
+      if (intOffset > marqueeTextWidth - footerWidth) {
+        u8g2Fonts.setCursor(footerLeft - intOffset + totalMarqueeW, footerY);
+        u8g2Fonts.print(marqueeRenderStr);
+      }
+    } else {
+      u8g2Fonts.setCursor(footerLeft, footerY);
       u8g2Fonts.print(marqueeRenderStr);
     }
-  } else {
-    u8g2Fonts.setCursor(footerLeft, footerY);
-    u8g2Fonts.print(marqueeRenderStr);
-  }
 
-  canvas->fillRect(0, 108, 24, 20, COLOR_FOOTER_BG);
-  canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
-  drawRadioIcon(6, 112, COLOR_PINK);
+    canvas->fillRect(0, 108, 24, 20, COLOR_FOOTER_BG);
+    canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
+    drawRadioIcon(6, 112, COLOR_PINK);
+  }
 
   tft.drawRGBBitmap(0, 0, canvas->getBuffer(), canvas->width(), canvas->height());
 }
 
 void loop() {
+  readSerialLines();
+
   unsigned long now = millis();
+
+  // BLE Scan & Connect handling
+  if (doConnect) {
+    if (connectToServer()) {
+      Serial.println("Connected to the BLE Server.");
+    } else {
+      Serial.println("Failed to connect to the BLE server.");
+    }
+    doConnect = false;
+  }
+
+  if (doScan && !bleConnected) {
+    BLEDevice::getScan()->start(5, false);
+    doScan = false;
+  }
 
   if (WiFi.status() == WL_CONNECTED) {
     if (!voiceHubFetched) {
