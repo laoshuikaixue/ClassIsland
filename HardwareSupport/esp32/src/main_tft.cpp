@@ -256,6 +256,12 @@ void fetchCourseData() {
       String weatherText = doc["weather"]["text"].as<String>();
       String temp = doc["weather"]["temp"].as<String>();
       weatherStr = weatherText + " " + temp + "℃";
+      if (doc["weather"].containsKey("warning")) {
+        String warningStr = doc["weather"]["warning"].as<String>();
+        if (warningStr.length() > 0) {
+          weatherStr += " " + warningStr;
+        }
+      }
       if (doc["weather"].containsKey("rain")) {
         String rainStr = doc["weather"]["rain"].as<String>();
         if (rainStr.length() > 0) {
@@ -530,6 +536,15 @@ void drawFogIcon(int x, int y, uint16_t color) {
   canvas->drawLine(x + 4, y + 10, x + 8, y + 10, color);
 }
 
+void drawWarningIcon(int x, int y, uint16_t bgColor, uint16_t fgColor) {
+  // Draw a filled circle as background
+  canvas->fillCircle(x + 6, y + 6, 6, bgColor);
+  
+  // Exclamation mark inside
+  canvas->drawLine(x + 6, y + 3, x + 6, y + 6, fgColor);
+  canvas->drawPixel(x + 6, y + 8, fgColor);
+}
+
 String animPrevStatusText = "";
 String animPrevMainText = "";
 uint16_t animPrevStatusColor = COLOR_WHITE;
@@ -663,16 +678,39 @@ void updateDisplay() {
 
   String tempText = "24°";
   String wText = weatherStr;
+  String warningText = "";
+  uint16_t warningColor = COLOR_WHITE;
+
   int spaceIdx = weatherStr.indexOf(' ');
   if (spaceIdx > 0) {
     wText = weatherStr.substring(0, spaceIdx);
-    tempText = weatherStr.substring(spaceIdx + 1);
+    int secondSpaceIdx = weatherStr.indexOf(' ', spaceIdx + 1);
+    
+    if (secondSpaceIdx > 0) {
+      tempText = weatherStr.substring(spaceIdx + 1, secondSpaceIdx);
+      warningText = weatherStr.substring(secondSpaceIdx + 1);
+      
+      if (warningText.indexOf("黄") != -1) warningColor = COLOR_YELLOW;
+      else if (warningText.indexOf("橙") != -1) warningColor = 0xFD20; // Orange
+      else if (warningText.indexOf("红") != -1) warningColor = 0xF800; // Red
+      else if (warningText.indexOf("蓝") != -1) warningColor = COLOR_BLUE;
+      else warningColor = COLOR_WHITE;
+    } else {
+      tempText = weatherStr.substring(spaceIdx + 1);
+    }
     tempText.replace("℃", "°");
   }
 
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   int tempW = u8g2Fonts.getUTF8Width(tempText.c_str());
   int weatherX = 128 - 4 - tempW;
+  
+  if (warningText.length() > 0) {
+    // Make room for the warning icon next to the temperature
+    weatherX -= 14; 
+    drawWarningIcon(128 - 4 - 12, 4, warningColor);
+  }
+
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
   u8g2Fonts.setCursor(weatherX, 16);
   u8g2Fonts.print(tempText);

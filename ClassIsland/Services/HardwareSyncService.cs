@@ -131,7 +131,8 @@ public class HardwareSyncService
                 {
                     text = weatherInfo != null ? WeatherService.GetWeatherTextByCode(weatherInfo.Current.Weather) : "未知",
                     temp = weatherInfo?.Current?.Temperature?.Value ?? "0",
-                    rain = rainMsg
+                    rain = rainMsg,
+                    warning = weatherInfo?.Alerts?.FirstOrDefault()?.Title ?? ""
                 },
                 courses = courses,
                 tomorrowCourses = tomorrowCourses
