@@ -53,6 +53,7 @@ const uint16_t COLOR_WHITE = 0xFFFF;
 enum Scenario {
   SCENARIO_LOADING,
   SCENARIO_NO_CLASSES,
+  SCENARIO_PRE_CLASS,
   SCENARIO_IN_CLASS,
   SCENARIO_BREAK,
   SCENARIO_END_OF_DAY
@@ -399,20 +400,19 @@ void updateCurrentCourse(int currentSecTotal) {
         newScenario = SCENARIO_BREAK;
         newNextCourseIndex = i + 1;
         
-        newDurationSec = nextStartSec - endSec;
-        int elapsed = currentSecTotal - endSec;
-        newProgressPercent = (newDurationSec > 0) ? (elapsed * 100 / newDurationSec) : 100;
+        newDurationSec = -1; // No duration for breaks
+        newProgressPercent = 100;
         newRemainingSec = nextStartSec - currentSecTotal;
         break;
       }
     }
 
     if (i == 0 && currentSecTotal < startSec) {
-      newScenario = SCENARIO_BREAK;
+      newScenario = SCENARIO_PRE_CLASS;
       newNextCourseIndex = 0;
-      newDurationSec = startSec;
-      int elapsed = currentSecTotal;
-      newProgressPercent = (newDurationSec > 0) ? (elapsed * 100 / newDurationSec) : 100;
+      
+      newDurationSec = -1; // No duration for pre-class
+      newProgressPercent = 100;
       newRemainingSec = startSec - currentSecTotal;
       break;
     }
@@ -727,8 +727,20 @@ void updateDisplay() {
       remainingText = String(currentRemainingSec) + "s";
     } else {
       int remMin = (currentRemainingSec + 59) / 60;
-      int durMin = currentDurationSec / 60;
-      remainingText = "-" + String(remMin) + "m/" + String(durMin) + "m";
+      remainingText = "-" + String(remMin) + "m";
+    }
+    progressColor = COLOR_CYAN;
+  } else if (currentScenario == SCENARIO_PRE_CLASS) {
+    statusText = "未上课";
+    statusColor = COLOR_GREEN;
+    mainText = "下一节: " + dailyCourses[nextCourseIndex].name;
+    timeRangeText = dailyCourses[nextCourseIndex].startTime + " 开始";
+    
+    if (currentRemainingSec <= 60 && currentRemainingSec >= 0) {
+      remainingText = String(currentRemainingSec) + "s";
+    } else {
+      int remMin = (currentRemainingSec + 59) / 60;
+      remainingText = "-" + String(remMin) + "m";
     }
     progressColor = COLOR_CYAN;
   } else if (currentScenario == SCENARIO_END_OF_DAY) {
