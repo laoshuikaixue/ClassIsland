@@ -1722,6 +1722,17 @@ void loop() {
             }
           }
           
+          if (doc.containsKey("voiceHub")) {
+            String vh = doc["voiceHub"].as<String>();
+            if (vh.length() > 0) {
+              voiceHubStr = vh;
+              voiceHubFetched = true;
+            } else {
+              voiceHubStr = "暂无近期排期";
+              voiceHubFetched = true;
+            }
+          }
+          
           marqueeOffset = 0.0f;
           xSemaphoreGive(dataMutex);
         }

@@ -143,6 +143,73 @@ public class HardwareSyncService
                 }
             }
 
+            var voiceHubStr = "";
+            try
+            {
+                using var httpVoiceHub = new HttpClient();
+                httpVoiceHub.Timeout = TimeSpan.FromSeconds(5);
+                var vhResponse = await httpVoiceHub.GetAsync("https://voicehub.lao-shui.top/api/songs/public");
+                if (vhResponse.IsSuccessStatusCode)
+                {
+                    var vhJson = await vhResponse.Content.ReadAsStringAsync();
+                    using var vhDoc = JsonDocument.Parse(vhJson);
+                    if (vhDoc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        var dataArr = vhDoc.RootElement;
+                        var today = DateTime.Today;
+                        string? targetDateStr = null;
+                        
+                        var futureDates = new HashSet<string>();
+                        foreach (var item in dataArr.EnumerateArray())
+                        {
+                            if (item.TryGetProperty("playDate", out var playDateElem))
+                            {
+                                var playDate = playDateElem.GetString();
+                                if (!string.IsNullOrEmpty(playDate) && playDate.Length >= 10)
+                                {
+                                    var dateStr = playDate.Substring(0, 10);
+                                    if (DateTime.TryParse(dateStr, out var d) && d.Date >= today)
+                                    {
+                                        futureDates.Add(dateStr);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (futureDates.Count > 0)
+                        {
+                            targetDateStr = futureDates.OrderBy(d => d).First();
+                            voiceHubStr = $"广播站排期 {targetDateStr}: ";
+                            int index = 1;
+                            
+                            var targetItems = dataArr.EnumerateArray()
+                                .Where(item => item.TryGetProperty("playDate", out var d) && d.GetString()?.StartsWith(targetDateStr) == true && item.TryGetProperty("song", out _))
+                                .OrderBy(item => item.TryGetProperty("sequence", out var seq) ? seq.GetInt32() : 999);
+                                
+                            foreach (var item in targetItems)
+                            {
+                                var song = item.GetProperty("song");
+                                var title = song.TryGetProperty("title", out var tElem) ? tElem.GetString() ?? "" : "";
+                                var artist = song.TryGetProperty("artist", out var aElem) ? aElem.GetString() ?? "" : "";
+                                var requester = song.TryGetProperty("requester", out var rElem) ? rElem.GetString() ?? "" : "";
+                                
+                                voiceHubStr += $"#{index} {title}-{artist}";
+                                if (!string.IsNullOrEmpty(requester))
+                                {
+                                    voiceHubStr += $"-{requester}";
+                                }
+                                voiceHubStr += "  ";
+                                index++;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 获取失败则为空
+            }
+
             var data = new
             {
                 date = DateTime.Today.ToString("yyyy-MM-dd"),
@@ -155,7 +222,8 @@ public class HardwareSyncService
                     warning = weatherInfo?.Alerts?.FirstOrDefault()?.Title ?? ""
                 },
                 courses = courses,
-                tomorrowCourses = tomorrowCourses
+                tomorrowCourses = tomorrowCourses,
+                voiceHub = voiceHubStr
             };
 
             // 发送数据到蓝牙设备（非阻塞）
@@ -208,11 +276,11 @@ public class HardwareSyncService
             
             if (!ble.IsOn)
             {
-                Logger.LogInformation("蓝牙未开启，跳过同步。");
+                // Logger.LogInformation("蓝牙未开启，跳过同步。");
                 return;
             }
 
-            Logger.LogInformation("正在扫描 ClassIsland_OLED 或 ClassIsland_TFT 蓝牙设备...");
+            // Logger.LogInformation("正在扫描 ClassIsland_OLED 或 ClassIsland_TFT 蓝牙设备...");
             
             IDevice? targetDevice = null;
             
@@ -296,16 +364,16 @@ public class HardwareSyncService
             }
             else
             {
-                Logger.LogInformation("未发现名为 ClassIsland_OLED 或 ClassIsland_TFT 的蓝牙设备。");
+                // Logger.LogInformation("未发现名为 ClassIsland_OLED 或 ClassIsland_TFT 的蓝牙设备。");
             }
         }
         catch (DeviceConnectionException e)
         {
-            Logger.LogWarning(e, "连接蓝牙设备失败");
+            // Logger.LogWarning(e, "连接蓝牙设备失败");
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "蓝牙同步数据时发生异常。");
+            // Logger.LogError(ex, "蓝牙同步数据时发生异常。");
         }
         finally
         {

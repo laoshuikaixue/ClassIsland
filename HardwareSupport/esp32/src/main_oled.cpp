@@ -762,6 +762,18 @@ void loop() {
               marqueeOffset = -128.0f;
             }
           }
+
+          if (doc.containsKey("voiceHub")) {
+            String vh = doc["voiceHub"].as<String>();
+            if (vh.length() > 0) {
+              voiceHubStr = vh;
+              voiceHubFetched = true;
+            } else {
+              voiceHubStr = "暂无近期排期";
+              voiceHubFetched = true;
+            }
+          }
+
           xSemaphoreGive(dataMutex);
         }
       }
