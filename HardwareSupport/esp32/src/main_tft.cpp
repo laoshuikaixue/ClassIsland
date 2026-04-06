@@ -10,7 +10,7 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <BLEAdvertisedDevice.h>  
 
 const char* ssid = "LHZX";
 const char* password = "a12345678";
@@ -728,6 +728,16 @@ uint32_t lastLyricPacketAt = 0;
 uint32_t lyricAnimStartMs = 0;
 const uint32_t LYRIC_TIMEOUT_MS = 5000;
 
+uint16_t currentCover[400]; // 20x20 RGB565
+bool hasCover = false;
+
+uint8_t hexCharToInt(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return 0;
+}
+
 uint32_t currentDisplayProgressMs() {
   uint32_t displayProgress = progressMs;
   if (isPlaying) {
@@ -745,6 +755,24 @@ void updateLyricFromJson(const char* line) {
   DeserializationError err = deserializeJson(doc, line);
   if (err) return;
   
+  if (doc.containsKey("type") && doc["type"] == "cover") {
+    const char* hexStr = doc["data"] | "";
+    int len = strlen(hexStr);
+    int pixelCount = 0;
+    for (int i = 0; i < len && i + 3 < len && pixelCount < 400; i += 4) {
+      uint16_t color = (hexCharToInt(hexStr[i]) << 12) |
+                       (hexCharToInt(hexStr[i+1]) << 8) |
+                       (hexCharToInt(hexStr[i+2]) << 4) |
+                       hexCharToInt(hexStr[i+3]);
+      // Swap endianness if necessary for Adafruit_GFX
+      // Adafruit_GFX drawRGBBitmap expects big-endian uint16_t arrays on little-endian MCU (ESP32 is little-endian)
+      // Actually drawRGBBitmap can handle uint16_t* natively, so no swap needed here if we pass uint16_t*
+      currentCover[pixelCount++] = color;
+    }
+    hasCover = (pixelCount > 0);
+    return;
+  }
+
   uint32_t newStartMs = doc["currentLyricStartMs"] | 0;
   if (newStartMs != currentLyricStartMs) {
     if (currentLyricStartMs != 0 && newStartMs > currentLyricStartMs && (newStartMs - currentLyricStartMs) < 30000) {
@@ -844,16 +872,19 @@ void drawHeartIcon(int x, int y, uint16_t color, bool big) {
   }
 }
 
-void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t endMs, uint32_t displayProgress, bool isCurrentLine) {
+void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t endMs, uint32_t displayProgress, bool isCurrentLine, bool shiftRight) {
   if (text.length() == 0) return;
   
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
   int textWidth = u8g2Fonts.getUTF8Width(text.c_str());
   int offset = 0;
   
+  int startX = shiftRight ? 26 : 6;
+  int maxWidth = 128 - startX;
+  
   // Auto scroll long lyrics
-  if (textWidth > 128 && endMs > startMs) {
-    int overflow = textWidth - 128 + 12; // 12px margin
+  if (textWidth > maxWidth && endMs > startMs) {
+    int overflow = textWidth - maxWidth + 12; // 12px margin
     uint32_t progress = displayProgress;
     if (progress < startMs) progress = startMs;
     if (progress > endMs) progress = endMs;
@@ -864,7 +895,7 @@ void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t end
     if (offset > overflow) offset = overflow;
   }
   
-  int drawX = 6 - offset;
+  int drawX = startX - offset;
   
   if (isCurrentLine && (playedLyric.length() > 0 || currentWord.length() > 0)) {
     // Implement "brightness change" by drawing the played part in WHITE and unplayed in GRAY
@@ -961,6 +992,55 @@ void updateDisplay() {
   updateCurrentCourse(currentSecTotal);
 
   canvas->fillScreen(COLOR_BG);
+  bool showLyrics = (lastLyricPacketAt > 0 && millis() - lastLyricPacketAt < LYRIC_TIMEOUT_MS);
+
+  // Section 4 (Background for lyrics) is handled later, but let's draw the lyrics FIRST
+  if (showLyrics) {
+    // Draw the footer background and divider for lyrics BEFORE drawing lyrics text
+    canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
+    canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
+
+    uint32_t currentDispMs = currentDisplayProgressMs();
+    int yOffset = 0;
+    if (lyricAnimStartMs > 0) {
+      uint32_t elapsed = millis() - lyricAnimStartMs;
+      if (elapsed < 300) {
+        float t = (float)elapsed / 300.0f;
+        float invT = 1.0f - t;
+        float easeOut = 1.0f - (invT * invT * invT);
+        yOffset = (int)((1.0f - easeOut) * 16.0f);
+      } else {
+        lyricAnimStartMs = 0;
+      }
+    }
+
+    int baseTextY = 124;
+
+    if (lyricAnimStartMs > 0 && prevLyric.length() > 0) {
+      drawTimedLyricTFT(
+        baseTextY - 16 + yOffset,
+        prevLyric,
+        prevLyricStartMs,
+        prevLyricEndMs,
+        currentDispMs,
+        false,
+        hasCover
+      );
+    }
+
+    drawTimedLyricTFT(
+      baseTextY + yOffset,
+      currentLyric,
+      currentLyricStartMs,
+      currentLyricEndMs,
+      currentDispMs,
+      true,
+      hasCover
+    );
+
+    // Clear any upward leak into the schedule section before drawing the schedule
+    canvas->fillRect(0, 74, 128, 34, COLOR_BG);
+  }
 
   // Section 3: Bottom Section (Schedule) (74 - 107)
   // Auto-scrolling logic for the entire schedule
@@ -992,15 +1072,17 @@ void updateDisplay() {
         int idx = i % tomorrowCourseCount;
         int y = 74 + 4 + i * 18 - (int)currentScheduleScrollY;
         
-        // Wrap around vertically if needed
-        if (y < 74 - 18) continue;
-        if (y > 128 + 18) continue;
+        // Ensure it doesn't render into the lyric section (y >= 108)
+        // A single item is 18px tall. We check its bottom boundary or just limit text.
+        if (y < 74 - 18 || y >= 108 - 12) continue;
 
-        if (y > 40 && y < 128) {
+        // Clip logic: only draw if it falls within the visible region
+        int textY = y + 12;
+        if (y > 56 && textY < 108) {
           u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
-          u8g2Fonts.setCursor(6, y + 12);
+          u8g2Fonts.setCursor(6, textY);
           u8g2Fonts.print("明日 " + tomorrowCourses[idx].startTime);
-          u8g2Fonts.setCursor(4 + 66, y + 12);
+          u8g2Fonts.setCursor(4 + 66, textY);
           u8g2Fonts.print(fitTextToWidth(tomorrowCourses[idx].name, 128 - 8 - 66));
         }
       }
@@ -1033,31 +1115,43 @@ void updateDisplay() {
       int idx = i % courseCount;
       int y = 74 + 2 + i * 18 - (int)currentScheduleScrollY;
       
-      // Skip items that are too far out of bounds
-      if (y > 128 + 18) continue; 
-      if (y < 74 - 18) continue;  
+      // Ensure it doesn't render into the lyric section (y >= 108)
+      // A single item is 18px tall. We check its bottom boundary or just limit text.
+      if (y < 74 - 18 || y >= 108 - 12) continue;
       
-      if (y > 40 && y < 128) {
+      // Calculate how much is visible for smooth entry/exit
+      int textY = y + 12;
+      
+      // Allow partial rendering: don't restrict too tightly, let u8g2 render partially
+      if (y > 56 && textY < 108) {
         bool isCurrent = (idx == currentCourseIndex);
         bool isPast = (idx < currentCourseIndex) || (currentCourseIndex == -1 && idx < nextCourseIndex);
 
         if (isCurrent) {
-          canvas->fillRoundRect(4, y, 128 - 8, 16, 2, COLOR_GRAY_800);
+          canvas->fillRoundRect(4, y, 128 - 8, 16, 2, COLOR_FOOTER_BG);
           u8g2Fonts.setForegroundColor(COLOR_WHITE);
         } else if (isPast) {
           u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
         } else {
           u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
         }
-        u8g2Fonts.setCursor(6, y + 12);
+        u8g2Fonts.setCursor(6, textY);
         u8g2Fonts.print(dailyCourses[idx].startTime);
-        u8g2Fonts.setCursor(4 + 36, y + 12);
+        u8g2Fonts.setCursor(4 + 36, textY);
         u8g2Fonts.print(fitTextToWidth(dailyCourses[idx].name, 128 - 8 - 36));
       }
     }
   }
 
   // Section 1: Top Bar (0 - 21)
+  // We draw this later to overlap the course list scrolling up!
+  // But wait, the section order matters.
+  // Actually, let's just clear the section 2 area (22-73) right after we draw the schedule,
+  // to cut off the top overflowing part.
+  canvas->fillRect(0, 22, 128, 52, COLOR_BG);
+  canvas->drawLine(0, 73, 127, 73, COLOR_GRAY_800);
+
+  // Re-draw Top Bar background just in case
   canvas->fillRect(0, 0, 128, 22, COLOR_BG);
   u8g2Fonts.setFont(u8g2_font_wqy16_t_gb2312);
   u8g2Fonts.setForegroundColor(COLOR_WHITE);
@@ -1158,7 +1252,8 @@ void updateDisplay() {
   canvas->drawLine(0, 21, 127, 21, COLOR_GRAY_800);
 
   // Section 2: Middle Section (22 - 73)
-  canvas->fillRect(0, 22, 128, 52, COLOR_BG);
+  // Background was already cleared above, but we can do it again if needed
+  // canvas->fillRect(0, 22, 128, 52, COLOR_BG);
   String statusText;
   uint16_t statusColor;
   String mainText;
@@ -1414,36 +1509,15 @@ void updateDisplay() {
 
   canvas->drawLine(0, 73, 127, 73, COLOR_GRAY_800);
 
-  // Section 4: Radio Marquee (108 - 127) or Lyric Display
-  bool showLyrics = (lastLyricPacketAt > 0 && millis() - lastLyricPacketAt < LYRIC_TIMEOUT_MS);
-
   if (showLyrics) {
-    canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
-    canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
+    // Note: lyrics are already drawn at the beginning of updateDisplay() to be under the schedule
+    // and they already have their background 108-128 drawn.
+    // The schedule clearing (0-73 and 74-108 logic) prevents leaks.
     
-    uint32_t currentDispMs = currentDisplayProgressMs();
-    
-    int yOffset = 0;
-    if (lyricAnimStartMs > 0) {
-      uint32_t elapsed = millis() - lyricAnimStartMs;
-      if (elapsed < 300) {
-        float t = (float)elapsed / 300.0f;
-        float invT = 1.0f - t;
-        float easeOut = 1.0f - (invT * invT * invT);
-        yOffset = (int)((1.0f - easeOut) * 16.0f);
-      } else {
-        lyricAnimStartMs = 0;
-      }
+    if (hasCover) {
+      canvas->fillRect(0, 108, 26, 20, COLOR_FOOTER_BG);
+      canvas->drawRGBBitmap(2, 108, currentCover, 20, 20);
     }
-
-    int baseTextY = 124;
-
-    if (lyricAnimStartMs > 0 && prevLyric.length() > 0) {
-      drawTimedLyricTFT(baseTextY - 16 + yOffset, prevLyric, prevLyricStartMs, prevLyricEndMs, currentDispMs, false);
-    }
-    
-    drawTimedLyricTFT(baseTextY + yOffset, currentLyric, currentLyricStartMs, currentLyricEndMs, currentDispMs, true);
-    
   } else {
     canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
     
