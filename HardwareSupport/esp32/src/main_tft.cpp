@@ -119,6 +119,7 @@ float rainMarqueeOffset = 0.0f;
 unsigned long lastRainMarqueeTime = 0;
 String rainMarqueeRenderStr = "";
 int rainMarqueeTextWidth = 0;
+String globalRainText = "";
 
 // BLE Heart Rate State
 static BLEUUID heartRateServiceUUID("180d");
@@ -1228,7 +1229,6 @@ void updateDisplay() {
   String tempText = "24°";
   String wText = weatherStr;
   String warningText = "";
-  String rainText = "";
   uint16_t warningColor = COLOR_WHITE;
 
   int spaceIdx = weatherStr.indexOf(' ');
@@ -1243,12 +1243,13 @@ void updateDisplay() {
       int pipeIdx = remainingText.indexOf(" | ");
       if (pipeIdx > 0) {
         warningText = remainingText.substring(0, pipeIdx);
-        rainText = remainingText.substring(pipeIdx + 3);
+        globalRainText = remainingText.substring(pipeIdx + 3);
       } else {
         if (remainingText.indexOf("预警") != -1) {
           warningText = remainingText;
+          globalRainText = "";
         } else {
-          rainText = remainingText;
+          globalRainText = remainingText;
         }
       }
       
@@ -1259,6 +1260,7 @@ void updateDisplay() {
       else warningColor = COLOR_WHITE;
     } else {
       tempText = weatherStr.substring(spaceIdx + 1);
+      globalRainText = "";
     }
     tempText.replace("℃", "°");
   }
@@ -1293,9 +1295,9 @@ void updateDisplay() {
     drawWarningIcon(warningIconX, 4, warningColor, fgColor, warningText);
   }
   
-  if (rainText.length() > 0) {
-    if (rainText != rainMarqueeRenderStr) {
-      rainMarqueeRenderStr = rainText;
+  if (globalRainText.length() > 0) {
+    if (globalRainText != rainMarqueeRenderStr) {
+      rainMarqueeRenderStr = globalRainText;
       u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
       rainMarqueeTextWidth = u8g2Fonts.getUTF8Width(rainMarqueeRenderStr.c_str());
       rainMarqueeOffset = 0.0f;

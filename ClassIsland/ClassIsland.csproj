@@ -51,11 +51,9 @@
         <None Remove="Assets\TrustedPublicKeys\ClassIsland.MetadataPublisher.asc" />
     </ItemGroup>
     <ItemGroup Condition="'$(Configuration)'=='Debug'">
-        <PackageReference Include="JetBrains.Profiler.Api" Version="1.4.11" />
-    </ItemGroup>
-    <ItemGroup>
         <PackageReference Include="InTheHand.BluetoothLE" Version="4.0.44" />
         <PackageReference Include="InTheHand.Net.Bluetooth" Version="4.2.4" />
+        <PackageReference Include="JetBrains.Profiler.Api" Version="1.4.11" />
         <PackageReference Include="Plugin.BLE" Version="3.2.0" />
     </ItemGroup>
     <ItemGroup Condition="'$(Configuration)'=='Debug_MSIX'">
