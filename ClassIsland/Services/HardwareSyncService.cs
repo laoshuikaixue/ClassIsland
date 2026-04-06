@@ -65,9 +65,9 @@ public class HardwareSyncService
             shouldSync = true;
         }
 
-        // 蓝牙同步每 5 分钟尝试一次，确保 ESP32 随时能收到数据
+        // 蓝牙同步每 5 秒尝试一次，确保 ESP32 随时能收到数据
         bool shouldSyncBluetooth = false;
-        if ((DateTime.Now - _lastBluetoothSyncTime).TotalMinutes >= 5)
+        if ((DateTime.Now - _lastBluetoothSyncTime).TotalSeconds >= 5)
         {
             shouldSyncBluetooth = true;
         }
@@ -194,8 +194,13 @@ public class HardwareSyncService
         }
     }
 
+    private bool _isBluetoothSyncing = false;
+
     private async Task SendViaBluetoothAsync(object data)
     {
+        if (_isBluetoothSyncing) return;
+        _isBluetoothSyncing = true;
+
         try
         {
             var ble = CrossBluetoothLE.Current;
@@ -220,7 +225,15 @@ public class HardwareSyncService
                 }
             };
 
-            await adapter.StartScanningForDevicesAsync(new Plugin.BLE.Abstractions.ScanFilterOptions());
+            var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try
+            {
+                await adapter.StartScanningForDevicesAsync(new Plugin.BLE.Abstractions.ScanFilterOptions(), null, false, cts.Token);
+            }
+            catch (TaskCanceledException)
+            {
+                // 超时正常结束扫描
+            }
             
             if (targetDevice == null)
             {
@@ -293,6 +306,10 @@ public class HardwareSyncService
         catch (Exception ex)
         {
             Logger.LogError(ex, "蓝牙同步数据时发生异常。");
+        }
+        finally
+        {
+            _isBluetoothSyncing = false;
         }
     }
 }
