@@ -5,12 +5,16 @@
 #include <ArduinoJson.h>
 #include <U8g2lib.h>
 #include <time.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 
 #ifdef U8X8_HAVE_HW_I2C
 #include <Wire.h>
 #endif
 
 // WiFi 配置
+
 const char* ssid = "LHZX";
 const char* password = "a12345678";
 const wifi_power_t wifiOutputPower = WIFI_POWER_8_5dBm;
@@ -23,7 +27,31 @@ const char* voiceHubApiUrl = "http://47.116.166.10:5000/api/voicehub";
 // OLED 初始化
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
+// 蓝牙 BLE
+#define SERVICE_UUID           "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+bool isBluetoothMode = false;
+String blePayload = "";
+bool newBleData = false;
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+      if (rxValue.length() > 0) {
+        for (int i = 0; i < rxValue.length(); i++) {
+          if (rxValue[i] == '\n') {
+            newBleData = true;
+          } else {
+            blePayload += rxValue[i];
+          }
+        }
+      }
+    }
+};
+
 // 全局变量
+
 String currentCourse = "加载中";
 String nextCourse = "";
 String currentTimeStr = "";
@@ -78,22 +106,29 @@ void fetchVoiceHubData();
 void updateDisplay();
 void updateCurrentCourse(int currentMin);
 
+SemaphoreHandle_t dataMutex = NULL;
+
 // 为了防止阻塞跑马灯，我们将网络请求放在后台任务中
 TaskHandle_t FetchTask;
 
 void fetchNetworkDataTask(void * pvParameters) {
   // 广播站排期只在刚启动时获取一次
-  fetchVoiceHubData();
+  if (!isBluetoothMode) {
+    fetchVoiceHubData();
+  }
   
   for (;;) {
-    fetchCourseData();
+    if (!isBluetoothMode) {
+      fetchCourseData();
+    }
     
-    // 等待30秒
-    vTaskDelay(30000 / portTICK_PERIOD_MS);
+    // 等待5分钟
+    vTaskDelay(300000 / portTICK_PERIOD_MS);
   }
 }
 
 void setup() {
+  dataMutex = xSemaphoreCreateMutex();
   Serial.begin(115200);
   
   // 等待串口连接，或者给充足的时间让监视器挂载
@@ -129,7 +164,8 @@ void setup() {
   WiFi.begin(ssid, password);
   
   int dotCount = 0;
-  while (WiFi.status() != WL_CONNECTED) {
+  // 增加超时机制，30秒超时（约100次循环，每次300ms）
+  while (WiFi.status() != WL_CONNECTED && dotCount < 100) {
     delay(300);
     u8g2.clearBuffer();
     u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
@@ -150,56 +186,91 @@ void setup() {
     dotCount++;
   }
   Serial.println();
-  Serial.println("WiFi connected");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
 
-  u8g2.clearBuffer();
-  u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
-  u8g2.drawStr(0, 22, "WLAN CONNECTED  [OK]");
-  String ipStr = "IP:" + WiFi.localIP().toString();
-  u8g2.drawStr(0, 34, ipStr.c_str());
-  u8g2.drawStr(0, 46, "SYNCING NTP...");
-  u8g2.sendBuffer();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi connected");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
 
-  configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
-  
-  // 等待时间同步完成，最多等10秒
-  Serial.print("Waiting for NTP time sync ");
-  int retry = 0;
-  struct tm timeinfo;
-  while (!getLocalTime(&timeinfo) && retry < 20) {
-    Serial.print(".");
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
+    u8g2.drawStr(0, 22, "WLAN CONNECTED  [OK]");
+    String ipStr = "IP:" + WiFi.localIP().toString();
+    u8g2.drawStr(0, 34, ipStr.c_str());
+    u8g2.drawStr(0, 46, "SYNCING NTP...");
+    u8g2.sendBuffer();
+
+    configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
     
-    // 更新NTP同步动画
+    // 等待时间同步完成，最多等10秒
+    Serial.print("Waiting for NTP time sync ");
+    int retry = 0;
+    struct tm timeinfo;
+    while (!getLocalTime(&timeinfo) && retry < 20) {
+      Serial.print(".");
+      
+      // 更新NTP同步动画
+      u8g2.clearBuffer();
+      u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
+      u8g2.drawStr(0, 22, "WLAN CONNECTED  [OK]");
+      u8g2.drawStr(0, 34, ipStr.c_str());
+      
+      String dots = "";
+      for(int i = 0; i < (retry % 4); i++) dots += ".";
+      String ntpStr = "SYNC NTP" + dots;
+      u8g2.drawStr(0, 46, ntpStr.c_str());
+      u8g2.sendBuffer();
+      
+      delay(500);
+      retry++;
+    }
+    Serial.println(retry < 20 ? " OK" : " Failed");
+
     u8g2.clearBuffer();
     u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
     u8g2.drawStr(0, 22, "WLAN CONNECTED  [OK]");
     u8g2.drawStr(0, 34, ipStr.c_str());
-    
-    String dots = "";
-    for(int i = 0; i < (retry % 4); i++) dots += ".";
-    String ntpStr = "SYNC NTP" + dots;
-    u8g2.drawStr(0, 46, ntpStr.c_str());
+    if (retry < 20) {
+      u8g2.drawStr(0, 46, "NTP SYNC        [OK]");
+    } else {
+      u8g2.drawStr(0, 46, "NTP SYNC      [FAIL]");
+    }
+    u8g2.drawStr(0, 60, "STARTING DAEMON...");
     u8g2.sendBuffer();
-    
-    delay(500);
-    retry++;
-  }
-  Serial.println(retry < 20 ? " OK" : " Failed");
-
-  u8g2.clearBuffer();
-  u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
-  u8g2.drawStr(0, 22, "WLAN CONNECTED  [OK]");
-  u8g2.drawStr(0, 34, ipStr.c_str());
-  if (retry < 20) {
-    u8g2.drawStr(0, 46, "NTP SYNC        [OK]");
+    delay(800);
   } else {
-    u8g2.drawStr(0, 46, "NTP SYNC      [FAIL]");
+    // WiFi 连接失败，进入蓝牙模式
+    isBluetoothMode = true;
+    Serial.println("WiFi failed. Starting Bluetooth...");
+    
+    // 释放WiFi资源以节省内存
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    
+    BLEDevice::init("ClassIsland_OLED");
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+    pCharacteristic->setCallbacks(new MyCallbacks());
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+    
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 10, "SYSTEM BOOTING  [OK]");
+    u8g2.drawStr(0, 22, "WLAN CONNECTED[FAIL]");
+    u8g2.drawStr(0, 34, "BLUETOOTH MAC   [OK]");
+    u8g2.drawStr(0, 46, "WAITING FOR DATA...");
+    u8g2.sendBuffer();
+    delay(2000);
   }
-  u8g2.drawStr(0, 60, "STARTING DAEMON...");
-  u8g2.sendBuffer();
-  delay(800);
 
   // 创建后台网络请求任务，运行在核心 0 上 (Arduino 默认运行在核心 1)
   xTaskCreatePinnedToCore(
@@ -257,41 +328,44 @@ void fetchCourseData() {
 
     success = true; // 成功获取并解析
 
-    if (doc.containsKey("weather")) {
-      String weatherText = doc["weather"]["text"].as<String>();
-      String temp = doc["weather"]["temp"].as<String>();
-      weatherStr = weatherText + " " + temp + "℃";
-      if (doc["weather"].containsKey("rain")) {
-        String rainStr = doc["weather"]["rain"].as<String>();
-        if (rainStr.length() > 0) {
-          weatherStr += " " + rainStr;
+    if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+      if (doc.containsKey("weather")) {
+        String weatherText = doc["weather"]["text"].as<String>();
+        String temp = doc["weather"]["temp"].as<String>();
+        weatherStr = weatherText + " " + temp + "℃";
+        if (doc["weather"].containsKey("rain")) {
+          String rainStr = doc["weather"]["rain"].as<String>();
+          if (rainStr.length() > 0) {
+            weatherStr += " " + rainStr;
+          }
         }
       }
-    }
 
-    if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
-      JsonArray coursesArr = doc["courses"].as<JsonArray>();
-      
-      if (coursesArr.size() > 0) {
-        courseCount = 0;
-        fullScheduleStr = "";
+      if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
+        JsonArray coursesArr = doc["courses"].as<JsonArray>();
         
-        for (JsonObject courseObj : coursesArr) {
-          if (courseCount >= MAX_COURSES) break;
+        if (coursesArr.size() > 0) {
+          courseCount = 0;
+          fullScheduleStr = "";
           
-          dailyCourses[courseCount].name = courseObj["name"].as<String>();
-          dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
-          dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
-          dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
-          dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
+          for (JsonObject courseObj : coursesArr) {
+            if (courseCount >= MAX_COURSES) break;
+            
+            dailyCourses[courseCount].name = courseObj["name"].as<String>();
+            dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
+            dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
+            dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
+            dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
+            
+            fullScheduleStr += dailyCourses[courseCount].name + " ";
+            courseCount++;
+          }
           
-          fullScheduleStr += dailyCourses[courseCount].name + " ";
-          courseCount++;
+          // 强制重置滚动状态，让新课表立即显示
+          marqueeOffset = -128.0f;
         }
-        
-        // 强制重置滚动状态，让新课表立即显示
-        marqueeOffset = -128.0f;
       }
+      xSemaphoreGive(dataMutex);
     }
 
     Serial.print("Loaded ");
@@ -339,34 +413,37 @@ void fetchVoiceHubData() {
             bool hasSchedule = false;
             JsonArray itemsArr = doc["data"].as<JsonArray>();
             
-            if (itemsArr.size() > 0) {
-              hasSchedule = true;
-              String targetDate = doc["targetDate"].as<String>();
-              
-              voiceHubStr = "广播站排期 " + targetDate + ": ";
-              
-              int index = 1;
-              for (JsonObject song : itemsArr) {
-                String title = song["title"].as<String>();
-                String artist = song["artist"].as<String>();
-                String requester = song["requester"].as<String>();
+            if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+              if (itemsArr.size() > 0) {
+                hasSchedule = true;
+                String targetDate = doc["targetDate"].as<String>();
                 
-                voiceHubStr += "#" + String(index) + " " + title + " - " + artist;
-                if (requester.length() > 0) {
-                  voiceHubStr += " - " + requester;
+                voiceHubStr = "广播站排期 " + targetDate + ": ";
+                
+                int index = 1;
+                for (JsonObject song : itemsArr) {
+                  String title = song["title"].as<String>();
+                  String artist = song["artist"].as<String>();
+                  String requester = song["requester"].as<String>();
+                  
+                  voiceHubStr += "#" + String(index) + " " + title + " - " + artist;
+                  if (requester.length() > 0) {
+                    voiceHubStr += " - " + requester;
+                  }
+                  voiceHubStr += "  ";
+                  index++;
                 }
-                voiceHubStr += "  ";
-                index++;
+                Serial.print("Loaded VoiceHub for date: ");
+                Serial.println(targetDate);
               }
-              Serial.print("Loaded VoiceHub for date: ");
-              Serial.println(targetDate);
+              
+              if (!hasSchedule) {
+                voiceHubStr = "暂无近期排期  ";
+                Serial.println("VoiceHub returned no schedule.");
+              }
+              voiceHubFetched = true;
+              xSemaphoreGive(dataMutex);
             }
-            
-            if (!hasSchedule) {
-              voiceHubStr = "暂无近期排期  ";
-              Serial.println("VoiceHub returned no schedule.");
-            }
-            voiceHubFetched = true;
             success = true; // 成功解析并处理
           } else {
             Serial.print("VoiceHub proxy logic err: ");
@@ -454,8 +531,9 @@ void updateCurrentCourse(int currentMin) {
 }
 
 void updateDisplay() {
-  struct tm timeinfo;
-  int currentMin = 0;
+  if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+    struct tm timeinfo;
+    int currentMin = 0;
   
   if (!getLocalTime(&timeinfo)) {
     currentTimeStr = "时间同步失败";
@@ -621,9 +699,75 @@ void updateDisplay() {
   }
 
   u8g2.sendBuffer();
+    xSemaphoreGive(dataMutex);
+  }
 }
 
 void loop() {
+  if (isBluetoothMode) {
+    if (newBleData) {
+      String payload = blePayload;
+      newBleData = false;
+      blePayload = "";
+      
+      DynamicJsonDocument doc(4096);
+      DeserializationError err = deserializeJson(doc, payload);
+      
+      if (!err) {
+        if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+          // 同步时间
+          if (doc.containsKey("timestamp")) {
+            long ts = doc["timestamp"].as<long>();
+            struct timeval tv;
+            tv.tv_sec = ts + 8 * 3600; // 转换为东八区
+            tv.tv_usec = 0;
+            settimeofday(&tv, NULL);
+          }
+
+          // 解析天气
+          if (doc.containsKey("weather")) {
+            String weatherText = doc["weather"]["text"].as<String>();
+            String temp = doc["weather"]["temp"].as<String>();
+            weatherStr = weatherText + " " + temp + "℃";
+            if (doc["weather"].containsKey("rain")) {
+              String rainStr = doc["weather"]["rain"].as<String>();
+              if (rainStr.length() > 0) {
+                weatherStr += " " + rainStr;
+              }
+            }
+          }
+
+          // 解析课程
+          if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
+            JsonArray coursesArr = doc["courses"].as<JsonArray>();
+            
+            if (coursesArr.size() > 0) {
+              courseCount = 0;
+              fullScheduleStr = "";
+              
+              for (JsonObject courseObj : coursesArr) {
+                if (courseCount >= MAX_COURSES) break;
+                
+                dailyCourses[courseCount].name = courseObj["name"].as<String>();
+                dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
+                dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
+                dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
+                dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
+                
+                fullScheduleStr += dailyCourses[courseCount].name + " ";
+                courseCount++;
+              }
+              
+              // 强制重置滚动状态
+              marqueeOffset = -128.0f;
+            }
+          }
+          xSemaphoreGive(dataMutex);
+        }
+      }
+    }
+  }
+
   updateDisplay();
   delay(1);
 }

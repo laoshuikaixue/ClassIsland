@@ -11,6 +11,29 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>  
+#include <BLEServer.h>
+
+#define SERVICE_UUID           "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+bool isBluetoothMode = false;
+String blePayload = "";
+bool newBleData = false;
+
+class MyServerCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+      if (rxValue.length() > 0) {
+        for (int i = 0; i < rxValue.length(); i++) {
+          if (rxValue[i] == '\n') {
+            newBleData = true;
+          } else {
+            blePayload += rxValue[i];
+          }
+        }
+      }
+    }
+};
 
 const char* ssid = "LHZX";
 const char* password = "a12345678";
@@ -30,6 +53,7 @@ constexpr uint8_t TFT_ROTATION = 0;
 
 Adafruit_ST7735 tft(&SPI, TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
 GFXcanvas16* canvas = nullptr;
+GFXcanvas16* lyricCanvas = nullptr;
 U8G2_FOR_ADAFRUIT_GFX u8g2Fonts;
 
 String currentCourse = "加载中";
@@ -188,8 +212,11 @@ int timeStringToMinutes(String t) {
   return 0;
 }
 
-void fetchCourseData();
-void fetchVoiceHubData();
+SemaphoreHandle_t dataMutex = NULL;
+bool voiceHubFetching = false;
+
+void fetchCourseDataTask(void *pvParameters);
+void fetchVoiceHubDataTask(void *pvParameters);
 void updateDisplay();
 void updateCurrentCourse(int currentMin);
 String buildFooterText();
@@ -220,6 +247,7 @@ void drawBootText(const String& line1, const String& line2, const String& line3,
 }
 
 void setup() {
+  dataMutex = xSemaphoreCreateMutex();
   Serial.setRxBufferSize(2048);
   Serial.begin(115200);
 
@@ -249,6 +277,7 @@ void setup() {
   Serial.println("TFT init done");
 
   canvas = new GFXcanvas16(tft.width(), tft.height());
+  lyricCanvas = new GFXcanvas16(128, 20);
 
   u8g2Fonts.begin(*canvas);
   u8g2Fonts.setFontMode(1);
@@ -263,7 +292,8 @@ void setup() {
   WiFi.begin(ssid, password);
 
   int dotCount = 0;
-  while (WiFi.status() != WL_CONNECTED) {
+  // 20秒超时，约66次循环
+  while (WiFi.status() != WL_CONNECTED && dotCount < 66) {
     String dots = "";
     for (int i = 0; i < (dotCount % 4); i++) {
       dots += ".";
@@ -275,35 +305,64 @@ void setup() {
   }
 
   Serial.println();
-  Serial.println("WiFi connected");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
 
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
+  BLEDevice::init("ClassIsland_TFT");
 
-  configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi connected");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
 
-  int retry = 0;
-  struct tm timeinfo;
-  while (!getLocalTime(&timeinfo) && retry < 20) {
-    String dots = "";
-    for (int i = 0; i < (retry % 4); i++) {
-      dots += ".";
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNCING NTP...");
+
+    configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp.ntsc.ac.cn", "cn.pool.ntp.org");
+
+    int retry = 0;
+    struct tm timeinfo;
+    while (!getLocalTime(&timeinfo) && retry < 20) {
+      String dots = "";
+      for (int i = 0; i < (retry % 4); i++) {
+        dots += ".";
+      }
+      drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
+      delay(500);
+      retry++;
     }
-    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), "SYNC NTP" + dots);
-    delay(500);
-    retry++;
+
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC        [OK]" : "NTP SYNC      [FAIL]", "STARTING DAEMON...");
+    delay(800);
+
+    voiceHubFetching = true;
+    xTaskCreate(fetchVoiceHubDataTask, "fetchVoiceHub", 8192, NULL, 1, NULL);
+    xTaskCreate(fetchCourseDataTask, "fetchCourse", 8192, NULL, 1, NULL);
+    lastCourseFetchTime = millis();
+  } else {
+    isBluetoothMode = true;
+    Serial.println("WiFi failed. Starting Bluetooth...");
+    
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    
+    drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED[FAIL]", "BLUETOOTH MAC   [OK]", "WAITING FOR DATA...");
+    delay(2000);
+    
+    BLEServer *pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+    pCharacteristic->setCallbacks(new MyServerCallbacks());
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
   }
-
-  drawBootText("SYSTEM BOOTING  [OK]", "WLAN CONNECTED  [OK]", "IP: " + WiFi.localIP().toString(), retry < 20 ? "NTP SYNC        [OK]" : "NTP SYNC      [FAIL]", "STARTING DAEMON...");
-  delay(800);
-
-  fetchVoiceHubData();
-  fetchCourseData();
-  lastCourseFetchTime = millis();
   
-  // Initialize BLE *after* fetching initial data so UI can show up quickly
-  BLEDevice::init("");
+  // Initialize BLE Client
   BLEScan* pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setInterval(1349);
@@ -314,8 +373,9 @@ void setup() {
   delay(100);
 }
 
-void fetchCourseData() {
+void fetchCourseDataTask(void *pvParameters) {
   if (WiFi.status() != WL_CONNECTED) {
+    vTaskDelete(NULL);
     return;
   }
 
@@ -333,7 +393,7 @@ void fetchCourseData() {
     if (httpCode <= 0 || httpCode == 500) {
       http.end();
       if (currentTry < maxRetries) {
-        delay(1000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
       }
       continue;
     }
@@ -345,71 +405,80 @@ void fetchCourseData() {
     DeserializationError err = deserializeJson(doc, payload);
     if (err) {
       if (currentTry < maxRetries) {
-        delay(1000);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
       }
       continue;
     }
 
-    if (doc.containsKey("weather")) {
-      String weatherText = doc["weather"]["text"].as<String>();
-      String temp = doc["weather"]["temp"].as<String>();
-      weatherStr = weatherText + " " + temp + "℃";
-      if (doc["weather"].containsKey("warning")) {
-        String warningStr = doc["weather"]["warning"].as<String>();
-        if (warningStr.length() > 0) {
-          weatherStr += " " + warningStr;
+    if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+      if (doc.containsKey("weather")) {
+        String weatherText = doc["weather"]["text"].as<String>();
+        String temp = doc["weather"]["temp"].as<String>();
+        weatherStr = weatherText + " " + temp + "℃";
+        if (doc["weather"].containsKey("warning")) {
+          String warningStr = doc["weather"]["warning"].as<String>();
+          if (warningStr.length() > 0) {
+            weatherStr += " " + warningStr;
+          }
+        }
+        if (doc["weather"].containsKey("rain")) {
+          String rainStr = doc["weather"]["rain"].as<String>();
+          if (rainStr.length() > 0) {
+            weatherStr += " " + rainStr;
+          }
         }
       }
-      if (doc["weather"].containsKey("rain")) {
-        String rainStr = doc["weather"]["rain"].as<String>();
-        if (rainStr.length() > 0) {
-          weatherStr += " " + rainStr;
+
+      courseCount = 0;
+      fullScheduleStr = "";
+
+      if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
+        JsonArray coursesArr = doc["courses"].as<JsonArray>();
+        for (JsonObject courseObj : coursesArr) {
+          if (courseCount >= MAX_COURSES) {
+            break;
+          }
+          dailyCourses[courseCount].name = courseObj["name"].as<String>();
+          dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
+          dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
+          dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
+          dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
+          fullScheduleStr += dailyCourses[courseCount].name + " ";
+          courseCount++;
         }
       }
+
+      tomorrowCourseCount = 0;
+      if (doc.containsKey("tomorrowCourses") && doc["tomorrowCourses"].is<JsonArray>()) {
+        JsonArray coursesArr = doc["tomorrowCourses"].as<JsonArray>();
+        for (JsonObject courseObj : coursesArr) {
+          if (tomorrowCourseCount >= MAX_COURSES) {
+            break;
+          }
+          tomorrowCourses[tomorrowCourseCount].name = courseObj["name"].as<String>();
+          tomorrowCourses[tomorrowCourseCount].startTime = courseObj["startTime"].as<String>();
+          tomorrowCourses[tomorrowCourseCount].endTime = courseObj["endTime"].as<String>();
+          tomorrowCourses[tomorrowCourseCount].startMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].startTime);
+          tomorrowCourses[tomorrowCourseCount].endMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].endTime);
+          tomorrowCourseCount++;
+        }
+      }
+
+      marqueeOffset = 0.0f;
+      xSemaphoreGive(dataMutex);
     }
-
-    courseCount = 0;
-    fullScheduleStr = "";
-
-    if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
-      JsonArray coursesArr = doc["courses"].as<JsonArray>();
-      for (JsonObject courseObj : coursesArr) {
-        if (courseCount >= MAX_COURSES) {
-          break;
-        }
-        dailyCourses[courseCount].name = courseObj["name"].as<String>();
-        dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
-        dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
-        dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
-        dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
-        fullScheduleStr += dailyCourses[courseCount].name + " ";
-        courseCount++;
-      }
-    }
-
-    tomorrowCourseCount = 0;
-    if (doc.containsKey("tomorrowCourses") && doc["tomorrowCourses"].is<JsonArray>()) {
-      JsonArray coursesArr = doc["tomorrowCourses"].as<JsonArray>();
-      for (JsonObject courseObj : coursesArr) {
-        if (tomorrowCourseCount >= MAX_COURSES) {
-          break;
-        }
-        tomorrowCourses[tomorrowCourseCount].name = courseObj["name"].as<String>();
-        tomorrowCourses[tomorrowCourseCount].startTime = courseObj["startTime"].as<String>();
-        tomorrowCourses[tomorrowCourseCount].endTime = courseObj["endTime"].as<String>();
-        tomorrowCourses[tomorrowCourseCount].startMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].startTime);
-        tomorrowCourses[tomorrowCourseCount].endMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].endTime);
-        tomorrowCourseCount++;
-      }
-    }
-
-    marqueeOffset = 0.0f;
+    
+    vTaskDelete(NULL);
     return;
   }
+  
+  vTaskDelete(NULL);
 }
 
-void fetchVoiceHubData() {
+void fetchVoiceHubDataTask(void *pvParameters) {
   if (WiFi.status() != WL_CONNECTED || voiceHubFetched) {
+    voiceHubFetching = false;
+    vTaskDelete(NULL);
     return;
   }
 
@@ -420,6 +489,8 @@ void fetchVoiceHubData() {
   int httpCode = http.GET();
   if (httpCode <= 0) {
     http.end();
+    voiceHubFetching = false;
+    vTaskDelete(NULL);
     return;
   }
 
@@ -427,39 +498,52 @@ void fetchVoiceHubData() {
   http.end();
 
   if (payload.length() == 0) {
+    voiceHubFetching = false;
+    vTaskDelete(NULL);
     return;
   }
 
   DynamicJsonDocument doc(2048);
   DeserializationError err = deserializeJson(doc, payload);
   if (err || doc["status"] != "success") {
+    voiceHubFetching = false;
+    vTaskDelete(NULL);
     return;
   }
 
-  JsonArray itemsArr = doc["data"].as<JsonArray>();
-  if (itemsArr.size() == 0) {
-    voiceHubStr = "暂无近期排期";
-    voiceHubFetched = true;
-    return;
-  }
-
-  String targetDate = doc["targetDate"].as<String>();
-  voiceHubStr = "广播站排期 " + targetDate + ": ";
-
-  int index = 1;
-  for (JsonObject song : itemsArr) {
-    String title = song["title"].as<String>();
-    String artist = song["artist"].as<String>();
-    String requester = song["requester"].as<String>();
-    voiceHubStr += "#" + String(index) + " " + title + "-" + artist;
-    if (requester.length() > 0) {
-      voiceHubStr += "-" + requester;
+  if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+    JsonArray itemsArr = doc["data"].as<JsonArray>();
+    if (itemsArr.size() == 0) {
+      voiceHubStr = "暂无近期排期";
+      voiceHubFetched = true;
+      voiceHubFetching = false;
+      xSemaphoreGive(dataMutex);
+      vTaskDelete(NULL);
+      return;
     }
-    voiceHubStr += "  ";
-    index++;
-  }
 
-  voiceHubFetched = true;
+    String targetDate = doc["targetDate"].as<String>();
+    voiceHubStr = "广播站排期 " + targetDate + ": ";
+
+    int index = 1;
+    for (JsonObject song : itemsArr) {
+      String title = song["title"].as<String>();
+      String artist = song["artist"].as<String>();
+      String requester = song["requester"].as<String>();
+      voiceHubStr += "#" + String(index) + " " + title + "-" + artist;
+      if (requester.length() > 0) {
+        voiceHubStr += "-" + requester;
+      }
+      voiceHubStr += "  ";
+      index++;
+    }
+
+    voiceHubFetched = true;
+    voiceHubFetching = false;
+    xSemaphoreGive(dataMutex);
+  }
+  
+  vTaskDelete(NULL);
 }
 
 int currentDurationSec = -1;
@@ -948,7 +1032,7 @@ void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t end
     }
     
     if (highlightW > 0) {
-      canvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
+      lyricCanvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
     }
   } else {
     // Normal drawing
@@ -968,7 +1052,7 @@ void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t end
       uint32_t den = endMs - startMs;
       int highlightW = static_cast<int>(num / den);
       if (highlightW > 0) {
-        canvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
+        lyricCanvas->fillRoundRect(drawX, y + 2, highlightW, 2, 1, COLOR_CYAN);
       }
     }
   }
@@ -977,8 +1061,9 @@ void drawTimedLyricTFT(int y, const String& text, uint32_t startMs, uint32_t end
 void updateDisplay() {
   if (canvas == nullptr) return;
 
-  struct tm timeinfo;
-  int currentSecTotal = 0;
+  if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+    struct tm timeinfo;
+    int currentSecTotal = 0;
 
   if (!getLocalTime(&timeinfo)) {
     currentTimeStr = "未同步";
@@ -993,54 +1078,6 @@ void updateDisplay() {
 
   canvas->fillScreen(COLOR_BG);
   bool showLyrics = (lastLyricPacketAt > 0 && millis() - lastLyricPacketAt < LYRIC_TIMEOUT_MS);
-
-  // Section 4 (Background for lyrics) is handled later, but let's draw the lyrics FIRST
-  if (showLyrics) {
-    // Draw the footer background and divider for lyrics BEFORE drawing lyrics text
-    canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
-    canvas->drawLine(0, 108, 127, 108, COLOR_GRAY_800);
-
-    uint32_t currentDispMs = currentDisplayProgressMs();
-    int yOffset = 0;
-    if (lyricAnimStartMs > 0) {
-      uint32_t elapsed = millis() - lyricAnimStartMs;
-      if (elapsed < 300) {
-        float t = (float)elapsed / 300.0f;
-        float invT = 1.0f - t;
-        float easeOut = 1.0f - (invT * invT * invT);
-        yOffset = (int)((1.0f - easeOut) * 16.0f);
-      } else {
-        lyricAnimStartMs = 0;
-      }
-    }
-
-    int baseTextY = 124;
-
-    if (lyricAnimStartMs > 0 && prevLyric.length() > 0) {
-      drawTimedLyricTFT(
-        baseTextY - 16 + yOffset,
-        prevLyric,
-        prevLyricStartMs,
-        prevLyricEndMs,
-        currentDispMs,
-        false,
-        hasCover
-      );
-    }
-
-    drawTimedLyricTFT(
-      baseTextY + yOffset,
-      currentLyric,
-      currentLyricStartMs,
-      currentLyricEndMs,
-      currentDispMs,
-      true,
-      hasCover
-    );
-
-    // Clear any upward leak into the schedule section before drawing the schedule
-    canvas->fillRect(0, 74, 128, 34, COLOR_BG);
-  }
 
   // Section 3: Bottom Section (Schedule) (74 - 107)
   // Auto-scrolling logic for the entire schedule
@@ -1072,19 +1109,14 @@ void updateDisplay() {
         int idx = i % tomorrowCourseCount;
         int y = 74 + 4 + i * 18 - (int)currentScheduleScrollY;
         
-        // Ensure it doesn't render into the lyric section (y >= 108)
-        // A single item is 18px tall. We check its bottom boundary or just limit text.
-        if (y < 74 - 18 || y >= 108 - 12) continue;
+        if (y < 56 || y > 108) continue;
 
-        // Clip logic: only draw if it falls within the visible region
         int textY = y + 12;
-        if (y > 56 && textY < 108) {
-          u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
-          u8g2Fonts.setCursor(6, textY);
-          u8g2Fonts.print("明日 " + tomorrowCourses[idx].startTime);
-          u8g2Fonts.setCursor(4 + 66, textY);
-          u8g2Fonts.print(fitTextToWidth(tomorrowCourses[idx].name, 128 - 8 - 66));
-        }
+        u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
+        u8g2Fonts.setCursor(6, textY);
+        u8g2Fonts.print("明日 " + tomorrowCourses[idx].startTime);
+        u8g2Fonts.setCursor(4 + 66, textY);
+        u8g2Fonts.print(fitTextToWidth(tomorrowCourses[idx].name, 128 - 8 - 66));
       }
     } else {
       u8g2Fonts.setForegroundColor(COLOR_GRAY_400);
@@ -1115,31 +1147,25 @@ void updateDisplay() {
       int idx = i % courseCount;
       int y = 74 + 2 + i * 18 - (int)currentScheduleScrollY;
       
-      // Ensure it doesn't render into the lyric section (y >= 108)
-      // A single item is 18px tall. We check its bottom boundary or just limit text.
-      if (y < 74 - 18 || y >= 108 - 12) continue;
+      if (y < 56 || y > 108) continue;
       
-      // Calculate how much is visible for smooth entry/exit
       int textY = y + 12;
       
-      // Allow partial rendering: don't restrict too tightly, let u8g2 render partially
-      if (y > 56 && textY < 108) {
-        bool isCurrent = (idx == currentCourseIndex);
-        bool isPast = (idx < currentCourseIndex) || (currentCourseIndex == -1 && idx < nextCourseIndex);
+      bool isCurrent = (idx == currentCourseIndex);
+      bool isPast = (idx < currentCourseIndex) || (currentCourseIndex == -1 && idx < nextCourseIndex);
 
-        if (isCurrent) {
-          canvas->fillRoundRect(4, y, 128 - 8, 16, 2, COLOR_FOOTER_BG);
-          u8g2Fonts.setForegroundColor(COLOR_WHITE);
-        } else if (isPast) {
-          u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
-        } else {
-          u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
-        }
-        u8g2Fonts.setCursor(6, textY);
-        u8g2Fonts.print(dailyCourses[idx].startTime);
-        u8g2Fonts.setCursor(4 + 36, textY);
-        u8g2Fonts.print(fitTextToWidth(dailyCourses[idx].name, 128 - 8 - 36));
+      if (isCurrent) {
+        canvas->fillRoundRect(4, y, 128 - 8, 16, 2, COLOR_FOOTER_BG);
+        u8g2Fonts.setForegroundColor(COLOR_WHITE);
+      } else if (isPast) {
+        u8g2Fonts.setForegroundColor(COLOR_GRAY_500);
+      } else {
+        u8g2Fonts.setForegroundColor(COLOR_GRAY_300);
       }
+      u8g2Fonts.setCursor(6, textY);
+      u8g2Fonts.print(dailyCourses[idx].startTime);
+      u8g2Fonts.setCursor(4 + 36, textY);
+      u8g2Fonts.print(fitTextToWidth(dailyCourses[idx].name, 128 - 8 - 36));
     }
   }
 
@@ -1510,14 +1536,57 @@ void updateDisplay() {
   canvas->drawLine(0, 73, 127, 73, COLOR_GRAY_800);
 
   if (showLyrics) {
-    // Note: lyrics are already drawn at the beginning of updateDisplay() to be under the schedule
-    // and they already have their background 108-128 drawn.
-    // The schedule clearing (0-73 and 74-108 logic) prevents leaks.
-    
-    if (hasCover) {
-      canvas->fillRect(0, 108, 26, 20, COLOR_FOOTER_BG);
-      canvas->drawRGBBitmap(2, 108, currentCover, 20, 20);
+    lyricCanvas->fillScreen(COLOR_FOOTER_BG);
+    lyricCanvas->drawLine(0, 0, 127, 0, COLOR_GRAY_800);
+
+    u8g2Fonts.begin(*lyricCanvas);
+
+    uint32_t currentDispMs = currentDisplayProgressMs();
+    int yOffset = 0;
+    if (lyricAnimStartMs > 0) {
+      uint32_t elapsed = millis() - lyricAnimStartMs;
+      if (elapsed < 300) {
+        float t = (float)elapsed / 300.0f;
+        float invT = 1.0f - t;
+        float easeOut = 1.0f - (invT * invT * invT);
+        yOffset = (int)((1.0f - easeOut) * 16.0f);
+      } else {
+        lyricAnimStartMs = 0;
+      }
     }
+
+    int baseTextY = 16; // 124 - 108
+
+    if (lyricAnimStartMs > 0 && prevLyric.length() > 0) {
+      drawTimedLyricTFT(
+        baseTextY - 16 + yOffset,
+        prevLyric,
+        prevLyricStartMs,
+        prevLyricEndMs,
+        currentDispMs,
+        false,
+        hasCover
+      );
+    }
+
+    drawTimedLyricTFT(
+      baseTextY + yOffset,
+      currentLyric,
+      currentLyricStartMs,
+      currentLyricEndMs,
+      currentDispMs,
+      true,
+      hasCover
+    );
+
+    u8g2Fonts.begin(*canvas);
+
+    if (hasCover) {
+      lyricCanvas->fillRect(0, 0, 26, 20, COLOR_FOOTER_BG);
+      lyricCanvas->drawRGBBitmap(2, 0, currentCover, 20, 20);
+    }
+
+    canvas->drawRGBBitmap(0, 108, lyricCanvas->getBuffer(), 128, 20);
   } else {
     canvas->fillRect(0, 108, 128, 20, COLOR_FOOTER_BG);
     
@@ -1573,10 +1642,92 @@ void updateDisplay() {
   }
 
   tft.drawRGBBitmap(0, 0, canvas->getBuffer(), canvas->width(), canvas->height());
+    xSemaphoreGive(dataMutex);
+  }
 }
 
 void loop() {
   readSerialLines();
+
+  if (isBluetoothMode) {
+    if (newBleData) {
+      String payload = blePayload;
+      newBleData = false;
+      blePayload = "";
+      
+      DynamicJsonDocument doc(4096);
+      DeserializationError err = deserializeJson(doc, payload);
+      
+      if (!err) {
+        if (xSemaphoreTake(dataMutex, portMAX_DELAY)) {
+          if (doc.containsKey("timestamp")) {
+            long ts = doc["timestamp"].as<long>();
+            struct timeval tv;
+            tv.tv_sec = ts + 8 * 3600;
+            tv.tv_usec = 0;
+            settimeofday(&tv, NULL);
+          }
+
+          if (doc.containsKey("weather")) {
+            String weatherText = doc["weather"]["text"].as<String>();
+            String temp = doc["weather"]["temp"].as<String>();
+            weatherStr = weatherText + " " + temp + "℃";
+            if (doc["weather"].containsKey("warning")) {
+              String warningStr = doc["weather"]["warning"].as<String>();
+              if (warningStr.length() > 0) {
+                weatherStr += " " + warningStr;
+              }
+            }
+            if (doc["weather"].containsKey("rain")) {
+              String rainStr = doc["weather"]["rain"].as<String>();
+              if (rainStr.length() > 0) {
+                weatherStr += " " + rainStr;
+              }
+            }
+          }
+
+          if (doc.containsKey("courses") && doc["courses"].is<JsonArray>()) {
+            JsonArray coursesArr = doc["courses"].as<JsonArray>();
+            courseCount = 0;
+            fullScheduleStr = "";
+            
+            for (JsonObject courseObj : coursesArr) {
+              if (courseCount >= MAX_COURSES) break;
+              
+              dailyCourses[courseCount].name = courseObj["name"].as<String>();
+              dailyCourses[courseCount].startTime = courseObj["startTime"].as<String>();
+              dailyCourses[courseCount].endTime = courseObj["endTime"].as<String>();
+              dailyCourses[courseCount].startMin = timeStringToMinutes(dailyCourses[courseCount].startTime);
+              dailyCourses[courseCount].endMin = timeStringToMinutes(dailyCourses[courseCount].endTime);
+              
+              fullScheduleStr += dailyCourses[courseCount].name + " ";
+              courseCount++;
+            }
+          }
+
+          if (doc.containsKey("tomorrowCourses") && doc["tomorrowCourses"].is<JsonArray>()) {
+            JsonArray coursesArr = doc["tomorrowCourses"].as<JsonArray>();
+            tomorrowCourseCount = 0;
+            
+            for (JsonObject courseObj : coursesArr) {
+              if (tomorrowCourseCount >= MAX_COURSES) break;
+              
+              tomorrowCourses[tomorrowCourseCount].name = courseObj["name"].as<String>();
+              tomorrowCourses[tomorrowCourseCount].startTime = courseObj["startTime"].as<String>();
+              tomorrowCourses[tomorrowCourseCount].endTime = courseObj["endTime"].as<String>();
+              tomorrowCourses[tomorrowCourseCount].startMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].startTime);
+              tomorrowCourses[tomorrowCourseCount].endMin = timeStringToMinutes(tomorrowCourses[tomorrowCourseCount].endTime);
+              
+              tomorrowCourseCount++;
+            }
+          }
+          
+          marqueeOffset = 0.0f;
+          xSemaphoreGive(dataMutex);
+        }
+      }
+    }
+  }
 
   unsigned long now = millis();
 
@@ -1596,12 +1747,13 @@ void loop() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    if (!voiceHubFetched) {
-      fetchVoiceHubData();
+    if (!voiceHubFetched && !voiceHubFetching) {
+      voiceHubFetching = true;
+      xTaskCreate(fetchVoiceHubDataTask, "fetchVoiceHub", 8192, NULL, 1, NULL);
     }
-    if (now - lastCourseFetchTime >= 30000UL) {
-      fetchCourseData();
-      lastCourseFetchTime = now;
+    if (now - lastCourseFetchTime >= 300000UL || lastCourseFetchTime == 0) { // 5 minutes
+      lastCourseFetchTime = now == 0 ? 1 : now;
+      xTaskCreate(fetchCourseDataTask, "fetchCourse", 8192, NULL, 1, NULL);
     }
   }
 
