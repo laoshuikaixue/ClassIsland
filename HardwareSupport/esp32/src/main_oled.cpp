@@ -333,11 +333,23 @@ void fetchCourseData() {
         String weatherText = doc["weather"]["text"].as<String>();
         String temp = doc["weather"]["temp"].as<String>();
         weatherStr = weatherText + " " + temp + "℃";
+        
+        String warningStr = "";
+        if (doc["weather"].containsKey("warning")) {
+          warningStr = doc["weather"]["warning"].as<String>();
+        }
+        
+        String rainStr = "";
         if (doc["weather"].containsKey("rain")) {
-          String rainStr = doc["weather"]["rain"].as<String>();
-          if (rainStr.length() > 0) {
-            weatherStr += " " + rainStr;
-          }
+          rainStr = doc["weather"]["rain"].as<String>();
+        }
+
+        if (warningStr.length() > 0 && rainStr.length() > 0) {
+          weatherStr += " " + warningStr + " " + rainStr;
+        } else if (warningStr.length() > 0) {
+          weatherStr += " " + warningStr;
+        } else if (rainStr.length() > 0) {
+          weatherStr += " " + rainStr;
         }
       }
 
@@ -729,11 +741,23 @@ void loop() {
             String weatherText = doc["weather"]["text"].as<String>();
             String temp = doc["weather"]["temp"].as<String>();
             weatherStr = weatherText + " " + temp + "℃";
+            
+            String warningStr = "";
+            if (doc["weather"].containsKey("warning")) {
+              warningStr = doc["weather"]["warning"].as<String>();
+            }
+            
+            String rainStr = "";
             if (doc["weather"].containsKey("rain")) {
-              String rainStr = doc["weather"]["rain"].as<String>();
-              if (rainStr.length() > 0) {
-                weatherStr += " " + rainStr;
-              }
+              rainStr = doc["weather"]["rain"].as<String>();
+            }
+
+            if (warningStr.length() > 0 && rainStr.length() > 0) {
+              weatherStr += " " + warningStr + " " + rainStr;
+            } else if (warningStr.length() > 0) {
+              weatherStr += " " + warningStr;
+            } else if (rainStr.length() > 0) {
+              weatherStr += " " + rainStr;
             }
           }
 

@@ -115,6 +115,11 @@ int marqueeTextWidth = 0;
 float currentCourseMarqueeOffset = 0.0f;
 unsigned long lastCurrentCourseMarqueeTime = 0;
 
+float rainMarqueeOffset = 0.0f;
+unsigned long lastRainMarqueeTime = 0;
+String rainMarqueeRenderStr = "";
+int rainMarqueeTextWidth = 0;
+
 // BLE Heart Rate State
 static BLEUUID heartRateServiceUUID("180d");
 static BLEUUID heartRateCharUUID("2a37");
@@ -1223,6 +1228,7 @@ void updateDisplay() {
   String tempText = "24°";
   String wText = weatherStr;
   String warningText = "";
+  String rainText = "";
   uint16_t warningColor = COLOR_WHITE;
 
   int spaceIdx = weatherStr.indexOf(' ');
@@ -1232,7 +1238,19 @@ void updateDisplay() {
     
     if (secondSpaceIdx > 0) {
       tempText = weatherStr.substring(spaceIdx + 1, secondSpaceIdx);
-      warningText = weatherStr.substring(secondSpaceIdx + 1);
+      String remainingText = weatherStr.substring(secondSpaceIdx + 1);
+      
+      int pipeIdx = remainingText.indexOf(" | ");
+      if (pipeIdx > 0) {
+        warningText = remainingText.substring(0, pipeIdx);
+        rainText = remainingText.substring(pipeIdx + 3);
+      } else {
+        if (remainingText.indexOf("预警") != -1) {
+          warningText = remainingText;
+        } else {
+          rainText = remainingText;
+        }
+      }
       
       if (warningText.indexOf("黄") != -1) warningColor = COLOR_YELLOW;
       else if (warningText.indexOf("橙") != -1) warningColor = 0xFD20; // Orange
@@ -1273,6 +1291,56 @@ void updateDisplay() {
     int warningIconX = iconX - 16; 
     uint16_t fgColor = (warningColor == COLOR_YELLOW || warningColor == COLOR_WHITE) ? COLOR_BG : COLOR_WHITE;
     drawWarningIcon(warningIconX, 4, warningColor, fgColor, warningText);
+  }
+  
+  if (rainText.length() > 0) {
+    if (rainText != rainMarqueeRenderStr) {
+      rainMarqueeRenderStr = rainText;
+      u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+      rainMarqueeTextWidth = u8g2Fonts.getUTF8Width(rainMarqueeRenderStr.c_str());
+      rainMarqueeOffset = 0.0f;
+      lastRainMarqueeTime = millis();
+    }
+
+    unsigned long now = millis();
+    unsigned long dt = now - lastRainMarqueeTime;
+    lastRainMarqueeTime = now;
+
+    int rainMaxWidth = 128 - (warningText.length() > 0 ? 56 : 40); // 留出左侧时钟和右侧图标的空间
+    int rainGap = 20;
+    int totalRainW = rainMarqueeTextWidth + rainGap;
+
+    if (rainMarqueeTextWidth > rainMaxWidth) {
+      rainMarqueeOffset += (dt / 1000.0f) * 15.0f; // 15像素/秒滚动
+      if (rainMarqueeOffset >= totalRainW) {
+        rainMarqueeOffset -= totalRainW;
+      }
+    } else {
+      rainMarqueeOffset = 0.0f;
+    }
+
+    int intOffset = (int)rainMarqueeOffset;
+    int rainX = 64 - rainMaxWidth / 2;
+    if (rainMarqueeTextWidth <= rainMaxWidth) {
+      rainX = 64 - rainMarqueeTextWidth / 2; // 居中
+    }
+
+    u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
+    u8g2Fonts.setForegroundColor(COLOR_CYAN);
+
+    u8g2Fonts.setCursor(rainX - intOffset, 22 + 12);
+    u8g2Fonts.print(rainMarqueeRenderStr);
+
+    if (rainMarqueeTextWidth > rainMaxWidth && intOffset > rainMarqueeTextWidth - rainMaxWidth) {
+      u8g2Fonts.setCursor(rainX - intOffset + totalRainW, 22 + 12);
+      u8g2Fonts.print(rainMarqueeRenderStr);
+    }
+    
+    // 手动遮挡溢出的文字
+    // 左侧遮挡 (时钟区域)
+    canvas->fillRect(0, 22, rainX, 14, COLOR_BG);
+    // 右侧遮挡 (如果有预警图标，或者天气图标区域)
+    canvas->fillRect(rainX + rainMaxWidth, 22, 128 - (rainX + rainMaxWidth), 14, COLOR_BG);
   }
 
   canvas->drawLine(0, 21, 127, 21, COLOR_GRAY_800);
@@ -1672,17 +1740,24 @@ void loop() {
             String weatherText = doc["weather"]["text"].as<String>();
             String temp = doc["weather"]["temp"].as<String>();
             weatherStr = weatherText + " " + temp + "℃";
+            
+            // 预警和降雨信息用特殊的分割符或者按顺序拼接
+            String warningStr = "";
             if (doc["weather"].containsKey("warning")) {
-              String warningStr = doc["weather"]["warning"].as<String>();
-              if (warningStr.length() > 0) {
-                weatherStr += " " + warningStr;
-              }
+              warningStr = doc["weather"]["warning"].as<String>();
             }
+            
+            String rainStr = "";
             if (doc["weather"].containsKey("rain")) {
-              String rainStr = doc["weather"]["rain"].as<String>();
-              if (rainStr.length() > 0) {
-                weatherStr += " " + rainStr;
-              }
+              rainStr = doc["weather"]["rain"].as<String>();
+            }
+
+            if (warningStr.length() > 0 && rainStr.length() > 0) {
+              weatherStr += " " + warningStr + " | " + rainStr;
+            } else if (warningStr.length() > 0) {
+              weatherStr += " " + warningStr;
+            } else if (rainStr.length() > 0) {
+              weatherStr += " " + rainStr;
             }
           }
 
