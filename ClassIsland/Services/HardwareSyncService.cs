@@ -219,7 +219,8 @@ public class HardwareSyncService
                     text = weatherInfo != null ? WeatherService.GetWeatherTextByCode(weatherInfo.Current.Weather) : "未知",
                     temp = weatherInfo?.Current?.Temperature?.Value ?? "0",
                     rain = rainMsg,
-                    warning = weatherInfo?.Alerts?.FirstOrDefault()?.Title ?? ""
+                    warning = weatherInfo?.Alerts?.FirstOrDefault()?.Title ?? "",
+                    alerts = weatherInfo?.Alerts?.Select(a => new { type = a.Type, level = a.Level, title = a.Title }).Cast<object>().ToArray() ?? Array.Empty<object>()
                 },
                 courses = courses,
                 tomorrowCourses = tomorrowCourses,

@@ -100,6 +100,15 @@ struct Course {
   int endMin;
 };
 
+struct WeatherAlert {
+  String type;
+  String level;
+  String title;
+};
+
+WeatherAlert currentAlerts[3];
+int currentAlertCount = 0;
+
 const int MAX_COURSES = 20;
 Course dailyCourses[MAX_COURSES];
 int courseCount = 0;
@@ -421,17 +430,36 @@ void fetchCourseDataTask(void *pvParameters) {
         String weatherText = doc["weather"]["text"].as<String>();
         String temp = doc["weather"]["temp"].as<String>();
         weatherStr = weatherText + " " + temp + "℃";
-        if (doc["weather"].containsKey("warning")) {
-          String warningStr = doc["weather"]["warning"].as<String>();
-          if (warningStr.length() > 0) {
-            weatherStr += " " + warningStr;
+        
+        currentAlertCount = 0;
+        String allWarnings = "";
+        if (doc["weather"].containsKey("alerts") && doc["weather"]["alerts"].is<JsonArray>()) {
+          JsonArray alertsArr = doc["weather"]["alerts"].as<JsonArray>();
+          for (JsonObject alertObj : alertsArr) {
+            if (currentAlertCount >= 3) break;
+            currentAlerts[currentAlertCount].type = alertObj["type"].as<String>();
+            currentAlerts[currentAlertCount].level = alertObj["level"].as<String>();
+            currentAlerts[currentAlertCount].title = alertObj["title"].as<String>();
+            if (allWarnings.length() > 0) allWarnings += " ";
+            allWarnings += currentAlerts[currentAlertCount].title;
+            currentAlertCount++;
           }
+        } else if (doc["weather"].containsKey("warning")) {
+          // fallback for older server/ble payloads
+          allWarnings = doc["weather"]["warning"].as<String>();
         }
+        
+        String rainStr = "";
         if (doc["weather"].containsKey("rain")) {
-          String rainStr = doc["weather"]["rain"].as<String>();
-          if (rainStr.length() > 0) {
-            weatherStr += " " + rainStr;
-          }
+          rainStr = doc["weather"]["rain"].as<String>();
+        }
+
+        if (allWarnings.length() > 0 && rainStr.length() > 0) {
+          weatherStr += " " + allWarnings + " | " + rainStr;
+        } else if (allWarnings.length() > 0) {
+          weatherStr += " " + allWarnings;
+        } else if (rainStr.length() > 0) {
+          weatherStr += " " + rainStr;
         }
       }
 
@@ -728,7 +756,7 @@ void drawWarningIcon(int x, int y, uint16_t bgColor, uint16_t fgColor, const Str
   // Draw a filled circle as background
   canvas->fillCircle(x + 6, y + 6, 6, bgColor);
   
-  if (warningText.indexOf("风") != -1) {
+  if (warningText.indexOf("大风") != -1 || warningText.indexOf("台风") != -1 || warningText.indexOf("飓风") != -1) {
     // Small wind icon inside
     canvas->drawLine(x + 3, y + 4, x + 7, y + 4, fgColor);
     canvas->drawLine(x + 7, y + 4, x + 8, y + 5, fgColor);
@@ -1229,7 +1257,6 @@ void updateDisplay() {
   String tempText = "24°";
   String wText = weatherStr;
   String warningText = "";
-  uint16_t warningColor = COLOR_WHITE;
 
   int spaceIdx = weatherStr.indexOf(' ');
   if (spaceIdx > 0) {
@@ -1252,17 +1279,40 @@ void updateDisplay() {
           globalRainText = remainingText;
         }
       }
-      
-      if (warningText.indexOf("黄") != -1) warningColor = COLOR_YELLOW;
-      else if (warningText.indexOf("橙") != -1) warningColor = 0xFD20; // Orange
-      else if (warningText.indexOf("红") != -1) warningColor = 0xF800; // Red
-      else if (warningText.indexOf("蓝") != -1) warningColor = COLOR_BLUE;
-      else warningColor = COLOR_WHITE;
     } else {
       tempText = weatherStr.substring(spaceIdx + 1);
       globalRainText = "";
     }
     tempText.replace("℃", "°");
+  }
+  
+  String warnings[3];
+  int warningCount = 0;
+  
+  if (currentAlertCount > 0) {
+    // 使用通过 alerts 数组解析的数据
+    warningCount = currentAlertCount;
+    for (int i = 0; i < warningCount; i++) {
+      warnings[i] = currentAlerts[i].type + currentAlerts[i].level; // e.g. "大风黄色"
+    }
+  } else if (warningText.length() > 0) {
+    // 兼容旧的基于字符串拼接的解析逻辑
+    String raw = warningText;
+    raw.replace(",", " ");
+    raw.replace("，", " ");
+    raw.replace("\n", " ");
+    raw.replace("\r", " ");
+    int start = 0;
+    while (start < raw.length() && warningCount < 3) {
+      int end = raw.indexOf(' ', start);
+      if (end == -1) end = raw.length();
+      String w = raw.substring(start, end);
+      w.trim();
+      if (w.length() > 0) {
+        warnings[warningCount++] = w;
+      }
+      start = end + 1;
+    }
   }
 
   u8g2Fonts.setFont(u8g2_font_wqy12_t_gb2312);
@@ -1288,11 +1338,21 @@ void updateDisplay() {
     drawSunIcon(iconX, 4, COLOR_YELLOW);
   }
 
-  if (warningText.length() > 0) {
+  if (warningCount > 0) {
+    // 多个预警时轮播显示，每2秒切换一次
+    int currentWarningIdx = (millis() / 2000) % warningCount;
+    String activeWarning = warnings[currentWarningIdx];
+    
+    uint16_t activeWarningColor = COLOR_WHITE;
+    if (activeWarning.indexOf("黄") != -1) activeWarningColor = COLOR_YELLOW;
+    else if (activeWarning.indexOf("橙") != -1) activeWarningColor = 0xFD20; // Orange
+    else if (activeWarning.indexOf("红") != -1) activeWarningColor = 0xF800; // Red
+    else if (activeWarning.indexOf("蓝") != -1) activeWarningColor = COLOR_BLUE;
+
     // Draw the warning icon to the left of the weather icon
     int warningIconX = iconX - 16; 
-    uint16_t fgColor = (warningColor == COLOR_YELLOW || warningColor == COLOR_WHITE) ? COLOR_BG : COLOR_WHITE;
-    drawWarningIcon(warningIconX, 4, warningColor, fgColor, warningText);
+    uint16_t fgColor = (activeWarningColor == COLOR_YELLOW || activeWarningColor == COLOR_WHITE) ? COLOR_BG : COLOR_WHITE;
+    drawWarningIcon(warningIconX, 4, activeWarningColor, fgColor, activeWarning);
   }
   
   if (globalRainText.length() > 0) {
@@ -1743,9 +1803,20 @@ void loop() {
             String temp = doc["weather"]["temp"].as<String>();
             weatherStr = weatherText + " " + temp + "℃";
             
-            // 预警和降雨信息用特殊的分割符或者按顺序拼接
             String warningStr = "";
-            if (doc["weather"].containsKey("warning")) {
+            currentAlertCount = 0;
+            if (doc["weather"].containsKey("alerts") && doc["weather"]["alerts"].is<JsonArray>()) {
+              JsonArray alertsArr = doc["weather"]["alerts"].as<JsonArray>();
+              for (JsonObject alertObj : alertsArr) {
+                if (currentAlertCount >= 3) break;
+                currentAlerts[currentAlertCount].type = alertObj["type"].as<String>();
+                currentAlerts[currentAlertCount].level = alertObj["level"].as<String>();
+                currentAlerts[currentAlertCount].title = alertObj["title"].as<String>();
+                if (warningStr.length() > 0) warningStr += " ";
+                warningStr += currentAlerts[currentAlertCount].title;
+                currentAlertCount++;
+              }
+            } else if (doc["weather"].containsKey("warning")) {
               warningStr = doc["weather"]["warning"].as<String>();
             }
             
