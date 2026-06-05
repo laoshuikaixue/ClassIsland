@@ -115,6 +115,15 @@ public partial class ScheduleDataGrid : TemplatedControl
         set => SetValue(SelectedClassPlanDateProperty, value);
     }
 
+    public static readonly StyledProperty<string> TutorialContextIdProperty = AvaloniaProperty.Register<ScheduleDataGrid, string>(
+        nameof(TutorialContextId), "");
+
+    public string TutorialContextId
+    {
+        get => GetValue(TutorialContextIdProperty);
+        set => SetValue(TutorialContextIdProperty, value);
+    }
+
     public static readonly AttachedProperty<Guid> SelectedNewTimeLayoutIdProperty =
         AvaloniaProperty.RegisterAttached<ScheduleDataGrid, Control, Guid>("SelectedNewTimeLayoutId", inherits: true);
 
@@ -161,6 +170,7 @@ public partial class ScheduleDataGrid : TemplatedControl
     public IProfileService ProfileService { get; } = IAppHost.GetService<IProfileService>(); 
     public ILessonsService LessonsService { get; } = IAppHost.GetService<ILessonsService>(); 
     public SettingsService SettingsService { get; } = IAppHost.GetService<SettingsService>();
+    public ITutorialService TutorialService { get; } = IAppHost.GetService<ITutorialService>();
 
     private DataGrid? _mainDataGrid;
 
@@ -203,6 +213,18 @@ public partial class ScheduleDataGrid : TemplatedControl
         }
 
         _mainDataGrid = e.NameScope.Find<DataGrid>("PART_DataGridWeekSchedule");
+        if (_mainDataGrid != null)
+        {
+            _mainDataGrid.SelectionChanged += MainDataGrid_OnSelectionChanged;
+        }
+    }
+
+    private void MainDataGrid_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_mainDataGrid != null && this.IsAttachedToVisualTree() && _mainDataGrid.SelectedIndex >= 0)
+        {
+            SelectedClassInfoIndex = _mainDataGrid.SelectedIndex;
+        }
     }
 
     private void ButtonNextWeek_OnClick(object? sender, RoutedEventArgs e)
@@ -282,6 +304,14 @@ public partial class ScheduleDataGrid : TemplatedControl
             {
                 if (_mainDataGrid != null) _mainDataGrid.SelectedIndex = SelectedClassInfoIndex;
             }
+        }
+
+        if (!string.IsNullOrEmpty(TutorialContextId))
+        {
+            TutorialService.Context[$"classisland.sdg.{TutorialContextId}.isCurrentWeekFull"] =
+                !ClassPlansCache.Contains(EmptyClassPlan);
+            TutorialService.Context[$"classisland.sdg.{TutorialContextId}.isEmpty"] =
+                ClassPlansCache.All(x => x == EmptyClassPlan);
         }
         
         UpdateUiSelection();
@@ -368,7 +398,7 @@ public partial class ScheduleDataGrid : TemplatedControl
 
     private void UpdateSelectedClassInfoByIndex()
     {
-        if (SelectedClassInfoIndex < 0 || SelectedClassInfoIndex >= WeekClassPlanRows.Count)
+        if (SelectedClassInfoIndex < 0 || SelectedClassInfoIndex >= WeekClassPlanRows.Count || !this.IsAttachedToVisualTree())
         {
             return;
         }

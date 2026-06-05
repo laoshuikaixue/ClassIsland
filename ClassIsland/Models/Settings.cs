@@ -1864,7 +1864,7 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
     private bool _isPluginsAutoUpdateEnabled = true;
     private bool _isPluginsUpdateNotificationEnabled = true;
     private int _windowTopmostRecheckMode = 0;
-    private bool _isScreenRecordingModeEnabled = false;
+    private bool _isWindowCaptureBlockingEnabled = false;
     private bool _hasEditModeTutorialShown = false;
     private int _classPlanEditModeIndex = 1;
     private bool _isRefreshingToastEnabled = true;
@@ -1877,6 +1877,7 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
     private DateTime _appLastStartedTime = DateTime.Now;
     private int _maxRefreshingToastCounts = 5;
     private RefreshingScopes _refreshingScopes = new();
+    private bool _isThemeSeparateInfoVisible = true;
 
     public bool IsIgnoreWorkAreaEnabled
     {
@@ -1948,6 +1949,17 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
         {
             if (value == _isScreenRecordingModeEnabled) return;
             _isScreenRecordingModeEnabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsWindowCaptureBlockingEnabled
+    {
+        get => _isWindowCaptureBlockingEnabled;
+        set
+        {
+            if (value == _isWindowCaptureBlockingEnabled) return;
+            _isWindowCaptureBlockingEnabled = value;
             OnPropertyChanged();
         }
     }
@@ -2389,6 +2401,17 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
         {
             if (value == _isThemeWarningVisible) return;
             _isThemeWarningVisible = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsThemeSeparateInfoVisible
+    {
+        get => _isThemeSeparateInfoVisible;
+        set
+        {
+            if (value == _isThemeSeparateInfoVisible) return;
+            _isThemeSeparateInfoVisible = value;
             OnPropertyChanged();
         }
     }

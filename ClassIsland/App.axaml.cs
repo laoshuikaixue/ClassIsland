@@ -260,6 +260,14 @@ public partial class App : AppBase, IAppHost
             {
                 Uri = Uri.TryCreate(args[0], UriKind.Absolute, out var uri) ? uri.ToString() : $"avares://ClassIsland/Assets/HoYoStickers/{args[0]}.png"
             });
+        SentrySdk.ConfigureScope(s =>
+        {
+            s.SetTag("subChannel", AppSubChannel);
+            s.SetTag("subChannel.os", OperatingSystem);
+            s.SetTag("subChannel.platform", Platform);
+            s.SetTag("subChannel.buildType", BuildType);
+            s.SetTag("subChannel.packagingType", PackagingType);
+        });
         base.Initialize();
     }
 
@@ -485,6 +493,14 @@ public partial class App : AppBase, IAppHost
             {
                 spanPreInit.Finish();
                 transaction.Finish();
+                
+                if (ApplicationCommand.Autostartup)
+                {
+                    // 自启动模式，直接退出
+                    Environment.Exit(0);
+                    return;
+                }
+                
                 await ProcessInstanceExisted();
                 Environment.Exit(0);
                 return;
@@ -592,6 +608,11 @@ public partial class App : AppBase, IAppHost
         AppBase.CurrentLifetime = ClassIsland.Core.Enums.ApplicationLifetime.StartingOffline;
         Logger = GetService<ILogger<App>>();
         Logger.LogInformation("ClassIsland {}", AppVersionLong);
+        if (App.ApplicationCommand.Diagnostic)
+        {
+            Logger.LogInformation("诊断模式已启用!");
+            Logger.LogDebug(GetService<DiagnosticService>().GetDiagnosticInfo());
+        }
         foreach (var plugin in PluginService.PluginLoadedStatus.Where(p => p.LoadStatus == PluginLoadStatus.Error))
         {
             Logger.LogWarning("插件加载失败:{PluginName}({PluginID},{PluginVersion}):{PluginLoadException}", plugin.Manifest.Name,plugin.Manifest.Id, plugin.Manifest.Version, plugin.Exception);
@@ -644,6 +665,7 @@ public partial class App : AppBase, IAppHost
         Settings = GetService<SettingsService>().Settings;
         Settings.IsSystemSpeechSystemExist = isSystemSpeechSystemExist;
         Settings.DiagnosticStartupCount++;
+
         // 记录MLE
         if (ApplicationCommand.PrevSessionMemoryKilled)
         {
