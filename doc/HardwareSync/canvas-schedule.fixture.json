@@ -1,0 +1,223 @@
+{
+  "refreshNow": true,
+  "taskAlias": "ClassIsland Schedule",
+  "data": {
+    "dateLine": "7月22日 周三",
+    "weather": "晴 30℃ · 高温预警",
+    "state": "上课中",
+    "title": "数学",
+    "remaining": "剩余 15 分钟",
+    "next": "下一节 15:35  英语",
+    "scheduleTitle": "今日课表",
+    "row1": "  14:45  物理",
+    "row2": "● 15:00  数学",
+    "row3": "  15:35  英语",
+    "footer": "广播站排期 2026-07-22: #1 示例歌曲-示例歌手"
+  },
+  "windowData": {
+    "default": [
+      {
+        "type": "div",
+        "props": {
+          "tw": "flex flex-col w-full h-full bg-white text-black p-[4px] gap-[2px] box-border overflow-hidden",
+          "children": [
+            {
+              "type": "div",
+              "props": {
+                "tw": "flex flex-row items-center justify-between min-w-0 h-[18px]",
+                "children": [
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-13-chillduansans font-semibold min-w-0",
+                      "style": {
+                        "fontSize": "13px",
+                        "lineHeight": "16px",
+                        "whiteSpace": "nowrap"
+                      },
+                      "children": "{{get inputData \"dateLine\" default=\"-\"}}"
+                    }
+                  },
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-12-chillduansans min-w-0",
+                      "style": {
+                        "fontSize": "12px",
+                        "lineHeight": "15px",
+                        "lineClamp": 1,
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis",
+                        "whiteSpace": "nowrap",
+                        "textAlign": "right"
+                      },
+                      "children": "{{get inputData \"weather\" default=\"\"}}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "div",
+              "props": {
+                "tw": "flex flex-row items-center min-w-0 h-[40px] border-t border-b border-black",
+                "children": [
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "flex flex-col flex-1 min-w-0",
+                      "children": [
+                        {
+                          "type": "div",
+                          "props": {
+                            "tw": "text-10-chillduansans",
+                            "style": {
+                              "fontSize": "10px",
+                              "lineHeight": "11px"
+                            },
+                            "children": "{{get inputData \"state\" default=\"\"}}"
+                          }
+                        },
+                        {
+                          "type": "div",
+                          "props": {
+                            "tw": "text-23-chillduansans font-bold min-w-0",
+                            "style": {
+                              "fontSize": "23px",
+                              "fontWeight": 700,
+                              "lineHeight": "25px",
+                              "lineClamp": 1,
+                              "overflow": "hidden",
+                              "textOverflow": "ellipsis",
+                              "whiteSpace": "nowrap"
+                            },
+                            "children": "{{get inputData \"title\" default=\"-\"}}"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-13-chillduansans font-semibold shrink-0",
+                      "style": {
+                        "fontSize": "13px",
+                        "fontWeight": 600,
+                        "lineHeight": "16px",
+                        "whiteSpace": "nowrap",
+                        "textAlign": "right"
+                      },
+                      "children": "{{get inputData \"remaining\" default=\"\"}}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "div",
+              "props": {
+                "tw": "text-13-chillduansans font-semibold min-w-0 h-[15px]",
+                "style": {
+                  "fontSize": "13px",
+                  "fontWeight": 600,
+                  "lineHeight": "15px",
+                  "lineClamp": 1,
+                  "overflow": "hidden",
+                  "textOverflow": "ellipsis",
+                  "whiteSpace": "nowrap"
+                },
+                "children": "{{get inputData \"next\" default=\"\"}}"
+              }
+            },
+            {
+              "type": "div",
+              "props": {
+                "tw": "flex flex-col min-w-0 h-[48px] border-t border-black",
+                "children": [
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-10-chillduansans font-semibold",
+                      "style": {
+                        "fontSize": "10px",
+                        "fontWeight": 600,
+                        "lineHeight": "11px"
+                      },
+                      "children": "{{get inputData \"scheduleTitle\" default=\"今日课表\"}}"
+                    }
+                  },
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-11-chillduansans min-w-0",
+                      "style": {
+                        "fontSize": "11px",
+                        "lineHeight": "12px",
+                        "whiteSpace": "nowrap",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis"
+                      },
+                      "children": "{{get inputData \"row1\" default=\"\"}}"
+                    }
+                  },
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-11-chillduansans min-w-0",
+                      "style": {
+                        "fontSize": "11px",
+                        "lineHeight": "12px",
+                        "whiteSpace": "nowrap",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis"
+                      },
+                      "children": "{{get inputData \"row2\" default=\"\"}}"
+                    }
+                  },
+                  {
+                    "type": "div",
+                    "props": {
+                      "tw": "text-11-chillduansans min-w-0",
+                      "style": {
+                        "fontSize": "11px",
+                        "lineHeight": "12px",
+                        "whiteSpace": "nowrap",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis"
+                      },
+                      "children": "{{get inputData \"row3\" default=\"\"}}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "div",
+              "props": {
+                "tw": "text-10-chillduansans min-w-0 h-[13px] border-t border-black",
+                "style": {
+                  "fontSize": "10px",
+                  "lineHeight": "12px",
+                  "lineClamp": 1,
+                  "overflow": "hidden",
+                  "textOverflow": "ellipsis",
+                  "whiteSpace": "nowrap"
+                },
+                "children": "{{get inputData \"footer\" default=\"暂无近期广播排期\"}}"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "layoutFull": {
+    "tw": "p-0 bg-white",
+    "style": {
+      "padding": 0,
+      "backgroundColor": "#FFFFFF"
+    }
+  },
+  "border": 0
+}

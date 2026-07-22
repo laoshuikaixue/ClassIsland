@@ -224,6 +224,10 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
     private bool _isHardwareSyncEnabled = true;
     private string _hardwareSyncApiUrl = "http://47.116.166.10:5000/api/upload";
     private string _hardwareSyncApiKey = "CIHW_2026_7f9bA2dE4kLm8QpR";
+    private bool _isDotHardwareSyncEnabled = false;
+    private string _dotHardwareSyncApiKey = "";
+    private string _dotHardwareSyncDeviceId = "";
+    private string _dotHardwareSyncTaskKey = "";
 
 
     public void NotifyPropertyChanged(string propertyName)
@@ -2688,6 +2692,50 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
         {
             if (value == _hardwareSyncApiKey) return;
             _hardwareSyncApiKey = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsDotHardwareSyncEnabled
+    {
+        get => _isDotHardwareSyncEnabled;
+        set
+        {
+            if (value == _isDotHardwareSyncEnabled) return;
+            _isDotHardwareSyncEnabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DotHardwareSyncApiKey
+    {
+        get => _dotHardwareSyncApiKey;
+        set
+        {
+            if (value == _dotHardwareSyncApiKey) return;
+            _dotHardwareSyncApiKey = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DotHardwareSyncDeviceId
+    {
+        get => _dotHardwareSyncDeviceId;
+        set
+        {
+            if (value == _dotHardwareSyncDeviceId) return;
+            _dotHardwareSyncDeviceId = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DotHardwareSyncTaskKey
+    {
+        get => _dotHardwareSyncTaskKey;
+        set
+        {
+            if (value == _dotHardwareSyncTaskKey) return;
+            _dotHardwareSyncTaskKey = value;
             OnPropertyChanged();
         }
     }

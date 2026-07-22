@@ -1,0 +1,110 @@
+<ci:SettingsPageBase xmlns="https://github.com/avaloniaui"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                     xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                     xmlns:controls="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
+                     xmlns:local="clr-namespace:ClassIsland.Views.SettingPages"
+                     mc:Ignorable="d"
+                     d:DesignWidth="800"
+                     d:DesignHeight="600"
+                     x:Class="ClassIsland.Views.SettingPages.HardwareSyncSettingsPage"
+                     d:DataContext="{d:DesignInstance local:HardwareSyncSettingsPage}">
+    <ScrollViewer>
+        <StackPanel Classes="settings-container animated-intro">
+            <ci:IconText Glyph="&#xE4A8;" Text="同步控制" Margin="0 0 0 8" />
+
+            <controls:SettingsExpander Header="硬件同步"
+                                       IconSource="{ci:FluentIconSource &#xE4A8;}"
+                                       Description="控制课表、天气和广播排期向外部硬件的同步。关闭后 Flask、BLE 和 Dot 均不会发送。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding ViewModel.SettingsService.Settings.IsHardwareSyncEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+
+            <Separator Margin="0 14 0 8" />
+            <ci:IconText Glyph="&#xE702;" Text="ESP32" Margin="0 0 0 4" />
+
+            <controls:SettingsExpander Header="ESP32 网络与蓝牙同步"
+                                       IconSource="{ci:FluentIconSource &#xE702;}"
+                                       Description="网络课表按日期或天气变化上传；BLE 继续每 5 秒尝试连接 ClassIsland_OLED 或 ClassIsland_TFT。">
+                <controls:SettingsExpanderItem Content="Flask 上传地址">
+                    <controls:SettingsExpanderItem.Footer>
+                        <TextBox MinWidth="280"
+                                 Watermark="http://server/api/upload"
+                                 Text="{Binding ViewModel.SettingsService.Settings.HardwareSyncApiUrl, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+                <controls:SettingsExpanderItem Content="上传密钥"
+                                               Description="作为 X-Upload-Key 请求头发送。">
+                    <controls:SettingsExpanderItem.Footer>
+                        <TextBox MinWidth="220"
+                                 PasswordChar="●"
+                                 Text="{Binding ViewModel.SettingsService.Settings.HardwareSyncApiKey, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+            </controls:SettingsExpander>
+
+            <Separator Margin="0 14 0 8" />
+            <ci:IconText Glyph="&#xE4A9;" Text="Dot 墨水瓶" Margin="0 0 0 4" />
+
+            <controls:SettingsExpander Header="Dot Canvas 同步"
+                                       IconSource="{ci:FluentIconSource &#xE4A9;}"
+                                       IsExpanded="{Binding ViewModel.SettingsService.Settings.IsDotHardwareSyncEnabled, Mode=OneWay}"
+                                       Description="课程状态变化立即刷新；倒计时仅在 30、15、5、1 分钟节点刷新，以降低耗电和残影。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding ViewModel.SettingsService.Settings.IsDotHardwareSyncEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+
+                <controls:SettingsExpanderItem Content="Dot API Key"
+                                               Description="在 Dot App 的“更多 → API Keys”中创建。密钥会明文保存在本机 Settings.json。">
+                    <controls:SettingsExpanderItem.Footer>
+                        <TextBox MinWidth="280"
+                                 PasswordChar="●"
+                                 Watermark="dot_app_..."
+                                 Text="{Binding ViewModel.SettingsService.Settings.DotHardwareSyncApiKey, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+
+                <controls:SettingsExpanderItem Content="设备 ID"
+                                               Description="填写 Dot 硬件设备序列号，不是 API Key。">
+                    <controls:SettingsExpanderItem.Footer>
+                        <TextBox MinWidth="220"
+                                 Watermark="设备序列号"
+                                 Text="{Binding ViewModel.SettingsService.Settings.DotHardwareSyncDeviceId, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+
+                <controls:SettingsExpanderItem Content="Canvas Task Key（可选）"
+                                               Description="只有设备循环任务中存在多个 Canvas API 内容时才需要填写。">
+                    <controls:SettingsExpanderItem.Footer>
+                        <TextBox MinWidth="220"
+                                 Watermark="通常留空"
+                                 Text="{Binding ViewModel.SettingsService.Settings.DotHardwareSyncTaskKey, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+
+                <controls:SettingsExpanderItem Content="准备设备"
+                                               Description="先在 Dot App 内容工作室中为目标设备的循环任务添加一个 Canvas API 内容。" />
+
+                <controls:SettingsExpanderItem Content="测试并推送当前课表">
+                    <controls:SettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock MaxWidth="300"
+                                       TextWrapping="Wrap"
+                                       Classes="l-instructive"
+                                       Text="{Binding ViewModel.DotTestStatus}" />
+                            <controls:ProgressRing Width="22"
+                                                   Height="22"
+                                                   IsIndeterminate="True"
+                                                   IsVisible="{Binding ViewModel.IsTestingDot}" />
+                            <Button Content="测试"
+                                    Command="{Binding ViewModel.TestDotCommand}"
+                                    IsEnabled="{Binding !ViewModel.IsTestingDot}" />
+                        </StackPanel>
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+            </controls:SettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</ci:SettingsPageBase>
