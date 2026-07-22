@@ -1864,6 +1864,7 @@ public class Settings : ObservableRecipient, ILessonControlSettings, INotificati
     private bool _isPluginsAutoUpdateEnabled = true;
     private bool _isPluginsUpdateNotificationEnabled = true;
     private int _windowTopmostRecheckMode = 0;
+    private bool _isScreenRecordingModeEnabled = false;
     private bool _isWindowCaptureBlockingEnabled = false;
     private bool _hasEditModeTutorialShown = false;
     private int _classPlanEditModeIndex = 1;
